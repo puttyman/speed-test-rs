@@ -56,7 +56,7 @@ Clippy runs with `-D warnings`. Without `just`, the commands are in the `justfil
 
 1. Update `version` in `Cargo.toml` (and `Cargo.lock`), commit.
 2. Tag `vX.Y.Z` and push the tag. `release.yml` builds every target, the Docker image
-   (`ghcr.io/puttyman/speed-test-rs:X.Y.Z` and `latest`) and the GitHub Release with
+   (`puttyman/speed-test-rs:X.Y.Z` on Docker Hub and `ghcr.io/puttyman/speed-test-rs`, plus `latest`) and the GitHub Release with
    `SHA256SUMS`. Tags with a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
 
 ## License

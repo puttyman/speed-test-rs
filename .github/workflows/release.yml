@@ -3,7 +3,8 @@
 # 1. site:     build the WASM/JS/CSS front end once and upload target/site.
 # 2. binaries: build the server for every target with that site embedded (embed-assets),
 #              smoke-test where the runner can execute the binary, package the archive.
-# 3. docker:   multi-arch image (amd64, arm64) from the same musl binaries -> GHCR.
+# 3. docker:   multi-arch image (amd64, arm64) from the same musl binaries -> GHCR, and
+#              Docker Hub (puttyman/speed-test-rs) when DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are set.
 # 4. publish:  SHA256SUMS + GitHub Release with every archive and generated notes.
 name: Release
 
@@ -171,13 +172,17 @@ jobs:
           retention-days: 7
 
   docker:
-    name: Docker image (GHCR)
+    name: Docker image (Docker Hub, GHCR)
     needs: binaries
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    env:
+      # Docker Hub publishing is on when the repository has these secrets.
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_IMAGE: docker.io/puttyman/speed-test-rs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -206,10 +211,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Docker Hub skipped
+        if: env.DOCKERHUB_USERNAME == ''
+        run: echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN secrets are not set; pushing to GHCR only."
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            name=${{ env.DOCKERHUB_IMAGE }},enable=${{ env.DOCKERHUB_USERNAME != '' }}
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest
