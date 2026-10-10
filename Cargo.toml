@@ -26,6 +26,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "BinaryType",
     "Blob",
     "CloseEvent",
+    "console",
     "Crypto",
     "ErrorEvent",
     "Event",
@@ -43,6 +44,17 @@ web-sys = { version = "0.3", optional = true, features = [
     "RequestCredentials",
     "RequestInit",
     "Response",
+    "RtcConfiguration",
+    "RtcDataChannel",
+    "RtcDataChannelInit",
+    "RtcDataChannelState",
+    "RtcDataChannelType",
+    "RtcIceGatheringState",
+    "RtcPeerConnection",
+    "RtcPeerConnectionState",
+    "RtcSdpType",
+    "RtcSessionDescription",
+    "RtcSessionDescriptionInit",
     "Storage",
     "WebSocket",
     "Window",
@@ -69,10 +81,13 @@ qrcode = { version = "0.14", default-features = false, optional = true }
 rust-embed = { version = "8.13", features = ["interpolate-folder-path"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
 socket2 = { version = "0.6", optional = true }
+# WebRTC packet-loss echo endpoint (SPEC §5.7). aws-lc-rs is str0m's default provider; dimpl
+# (str0m's DTLS) pulls aws-lc-rs in for certificate generation with every provider anyway.
+str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"], optional = true }
 # Bundled SQLite (compiled in, no system libsqlite3). Runtime-checked queries only, so no
 # DATABASE_URL is needed at build time.
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "macros"], optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "sync", "time"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "sync", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
@@ -119,6 +134,7 @@ ssr = [
     "dep:qrcode",
     "dep:rustls",
     "dep:socket2",
+    "dep:str0m",
     "dep:sqlx",
     "dep:tokio",
     "dep:tracing",

@@ -8,6 +8,7 @@ pub mod healthcheck;
 pub mod http_measure;
 pub mod listen;
 pub mod router;
+pub mod rtc;
 pub mod rtc_hook;
 pub mod runs_api;
 pub mod sessions;

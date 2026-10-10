@@ -41,7 +41,7 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(feature = "ssr")]
 async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
-    use speed_test_rs::server::{AppState, assets, listen, router, startup, storage};
+    use speed_test_rs::server::{AppState, assets, listen, router, rtc, startup, storage};
 
     startup::init_logging(&config);
 
@@ -75,6 +75,19 @@ async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
         );
     }
 
+    // WebRTC packet-loss endpoint (SPEC §5.7). Without it the test reports "unavailable".
+    let rtc = match rtc::RtcEcho::start(&state.config) {
+        Ok(echo) => {
+            let description = echo.describe().to_owned();
+            state.measure.rtc = Some(std::sync::Arc::new(echo));
+            Some(description)
+        }
+        Err(e) => {
+            tracing::warn!("WebRTC packet loss test unavailable: {e}");
+            None
+        }
+    };
+
     let local_addrs = |listeners: &[std::net::TcpListener]| {
         listeners
             .iter()
@@ -89,6 +102,7 @@ async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
             .map(|(listeners, _)| local_addrs(listeners))
             .unwrap_or_default(),
         assets: state.assets.describe(),
+        rtc,
     };
     bound.print_banner();
     // The sockets are already listening, so the browser can connect right away.
