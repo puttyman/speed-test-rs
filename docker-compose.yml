@@ -21,7 +21,7 @@
 name: speed-test-rs
 
 x-speed-test: &speed-test
-  image: ghcr.io/puttyman/speed-test-rs:latest
+  image: puttyman/speed-test-rs:latest
   build: .
   restart: unless-stopped
   volumes:
