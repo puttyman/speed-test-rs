@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Build stage -----------------------------------------------------------
-FROM rust:1-bookworm AS builder
+FROM rust:1-trixie AS builder
 
 ARG CARGO_LEPTOS_VERSION=0.3.11
 
@@ -14,7 +14,7 @@ COPY . .
 RUN cargo leptos build --release
 
 # ---- Runtime stage ---------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN useradd --system --uid 10001 --home /app speedtest
 

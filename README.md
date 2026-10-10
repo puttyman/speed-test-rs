@@ -49,11 +49,10 @@ Then open `http://<server-ip>:8080`.
 
 ## Development
 
-Requirements: stable Rust (1.85 or newer) and `cargo-leptos`. `cargo-leptos` downloads `sass`
+Requirements: stable Rust (1.89 or newer; `rust-toolchain.toml` installs the WASM target for you) and `cargo-leptos`. `cargo-leptos` downloads `sass`
 and `wasm-bindgen` automatically.
 
 ```bash
-rustup target add wasm32-unknown-unknown
 cargo install cargo-leptos --locked
 
 cargo leptos watch          # dev server with hot reload on http://127.0.0.1:3000
