@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v0.1 |
-| **Last updated** | 2026-10-10 (v0.3: Unloan-inspired design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
+| **Last updated** | 2026-10-10 (v0.4: multi-device, captured design tokens; v0.3: Unloan-inspired design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
 | **Stack** | Rust 2024 edition (stable, MSRV 1.89) · Leptos 0.8 (SSR + hydration/WASM) · Axum 0.8 · Tokio · WebSocket · WebRTC (str0m) · SQLite |
 | **License** | MIT OR Apache-2.0 |
 
@@ -41,16 +41,19 @@ UDP **WebRTC data channel** served by the app itself, so no external TURN server
 5. **History and comparison with zero effort**: every run is saved automatically with a
    **prefilled label** (e.g. "Office – AP-2 – 5 GHz"), which is easy to change. History
    groups runs by label, and compare shows labels or runs side by side (§7.7).
-6. **Installable** as a PWA on phones and desktops (§7.9).
-7. **One-command deploy, two ways**:
+6. **Multi-device awareness**: every open browser appears live in every other one. Devices
+   can run a **synchronized group test** to measure how an access point shares bandwidth
+   under concurrent load (§5.11).
+7. **Installable** as a PWA on phones and desktops (§7.9).
+8. **One-command deploy, two ways**:
    - **Standalone binary**: one executable per platform with the Leptos UI (HTML shell, WASM,
      JS, CSS, icons) embedded. `./speed-test-rs` starts the server and serves the UI, with no
      `site/` folder, runtime, or installer needed. Builds for Linux (x86_64, aarch64, armv7),
      macOS (Intel, Apple Silicon) and Windows (x86_64). See §10.1.
    - **Docker**: `docker run -p 8080:8080 -p 3478:3478/udp ghcr.io/…/speed-test-rs`. The image
      wraps the same Linux binary and targets amd64 and arm64 (Raspberry Pi, NAS boxes).
-8. **Private by default**: no telemetry and no external calls. All assets are served locally.
-9. **Open source and easy to contribute to**: clear module boundaries, tests, CI.
+9. **Private by default**: no telemetry and no external calls. All assets are served locally.
+10. **Open source and easy to contribute to**: clear module boundaries, tests, CI.
 
 ### 2.2 Non-goals (v1)
 
@@ -70,6 +73,7 @@ UDP **WebRTC data channel** served by the app itself, so no external TURN server
 | S3 | Someone diagnoses "laggy Wi-Fi" while gaming or on video calls. | Loaded latency (bufferbloat), jitter, packet loss and quality scores matter more than raw throughput. |
 | S4 | A user sees odd numbers and switches to HTTP mode to cross-check against the WebSocket engine. | Transport toggle (§5.8). |
 | S5 | A user shares a run with a link (`/runs/{id}`) with someone else on the LAN. | Run detail page. |
+| S6 | Two or more people (phone, laptop, TV) test **at the same time** to see how one access point shares its capacity, and each sees the others' live speeds. | Live devices panel, group test (§5.11, §7.11) |
 
 ## 4. Architecture
 
@@ -288,13 +292,70 @@ The scoring is a pure function in `model::scores` with table-driven unit tests.
 - `jitter` (mean absolute difference of consecutive values)
 - `box_plot` (min, q1, median, q3, max) for the latency charts
 
+### 5.11 Concurrent tests from multiple devices
+
+Wi-Fi capacity is shared. One phone getting 600 Mbps says little about what three devices get
+together. The app makes concurrency visible and measurable in two ways.
+
+**1. Live presence (always on).** Every open browser keeps its `/ws/control` socket open
+from page load, not only during a test, and appears in every other browser's **Devices**
+panel (§7.11) with its device name, label, state (idle, or the phase it is testing) and live
+speed.
+- **Live speed comes from the server.** The server counts the bytes it sends and receives on
+  each session's data sockets and computes a per-device rate every 250 ms. A slow or
+  backgrounded client therefore can't misreport, and peers see consistent numbers. Clients
+  only report their phase and, at the end, their summary.
+- The server broadcasts a single combined `Peers` frame at most **4 times per second** to all
+  control sockets. The control socket is separate from the data sockets, so presence traffic
+  (a few hundred bytes per frame) never queues behind measurement data.
+
+**2. Group test (synchronized).** To measure shared capacity on purpose:
+1. Any device taps **Test together**. This creates a group, and every other open device shows
+   an invite ("Office Mac wants to test together · Join").
+2. Devices join. The host sees the member list and taps **Start**.
+3. The server sends `GroupStart { starts_in_ms: 3000, plan }` to all members, and each shows a
+   3-2-1 countdown. LAN delivery jitter (a few ms) is negligible against phase lengths of seconds.
+4. Group mode uses the **time-based `concurrent` profile** instead of the size ramp, so all
+   devices load the network at the same moments:
+   1. idle latency for 3 s
+   2. download for 10 s (continuous stream, loaded-latency probes running)
+   3. 2 s pause
+   4. upload for 10 s
+   5. packet loss, optional
+5. **The server computes the results** from its own byte counters over the common window:
+   - per-device throughput
+   - **aggregate** throughput (sum of all devices)
+   - **each device's share**
+   - **fairness**, using Jain's index `(Σx)² / (n·Σx²)`: 1.0 means a perfectly even split
+   - per-device loaded latency (from that device's probes)
+6. A device that drops out mid-test is marked `incomplete`, and the aggregate covers the
+   devices that finished the window.
+
+**3. Overlap flagging (solo tests).** If another session moves data while a solo test runs,
+the server records the overlap. Each result gets
+`concurrency: { peers_max, overlap_ms, overlap_ratio }`. The UI shows a badge ("Tested while
+2 other devices were active"), and history and compare can filter overlapped runs out, so a
+loaded result isn't mistaken for the access point's capacity. Before a solo test starts while
+others are testing, the UI asks: **Wait** (queue until they finish) or **Test anyway**.
+
+**Server bottleneck warning.** Concurrent tests can saturate the *server's* link rather than
+the Wi-Fi. On Linux the server reads its interface speed (`/sys/class/net/<iface>/speed`) for
+the interface serving each client. If the aggregate reaches ≥ 90% of it, the result reads
+"Total is close to the server's 1 Gbps link: the server may be the bottleneck, not the Wi-Fi".
+Where the speed can't be read, the server can be told with `--server-link-mbps`.
+
+**Privacy.** Presence shares device name, device type and label, not IP addresses (IPs appear
+only in run details, as today). A device can set **Hide me** in settings, after which others
+see "1 hidden device testing" with its speed but no name. `--no-presence` turns the feature
+off server-wide.
+
 ## 6. Protocols and APIs
 
 ### 6.1 WebSocket endpoints
 
 | Path | Frames | Purpose |
 |---|---|---|
-| `/ws/control` | JSON text | Session start and stop, progress events, WebRTC signalling |
+| `/ws/control` | JSON text | Opened on page load and kept open: presence (§5.11), session start and stop, progress events, group tests, WebRTC signalling |
 | `/ws/data` | JSON text (requests, acks) + binary (payload) | Download and upload transfers. Several may be open for parallel streams. |
 | `/ws/probe` | JSON text | Ping/pong for idle and loaded latency |
 
@@ -306,7 +367,13 @@ All JSON messages are tagged by `"t"`. They are defined once as `#[serde(tag = "
 
 ```rust
 enum ClientMsg {
-    Hello { session: Uuid, role: Role },
+    Hello { session: Uuid, role: Role, device: Option<DeviceInfo> }, // device on the control socket
+    Status { phase: Option<Phase>, label: Option<String> },       // presence updates
+    SetHidden { hidden: bool },
+    GroupCreate,
+    GroupJoin { group: Uuid },
+    GroupLeave,
+    GroupStart,                                                   // host only
     Ping { seq: u32 },
     Download { id: u32, bytes: u64 },
     Upload { id: u32, bytes: u64 },
@@ -321,16 +388,23 @@ enum ServerMsg {
     UploadDone { id: u32, bytes: u64, server_ms: f64 },
     RtcAnswer { sdp: String },
     Ice { candidate: String },
+    Peers { peers: Vec<Peer>, hidden_active: u32 },  // full snapshot, ≤ 4 Hz
+    GroupInvite { group: Uuid, host: String },
+    GroupUpdate { group: Uuid, members: Vec<Peer>, state: GroupState },
+    GroupStart { group: Uuid, starts_in_ms: u32, plan: Profile },
+    GroupResult { group: Uuid, result: GroupResult },
     Error { code: ErrorCode, message: String },
 }
+// Peer { id, device_name, device_kind, label, is_you, state: Idle | Testing { phase, down_bps, up_bps, latency_ms } }
 ```
 
 **Server limits**, advertised in `Welcome` and enforced:
 - `max_bytes_per_request` (default 2 GB)
 - `max_streams` (8)
-- `max_concurrent_sessions` (default 4). Beyond that, the server returns `Error{code:Busy}` and
-  the UI shows "Server busy, another test is running". This stops concurrent tests from
-  skewing each other.
+- `max_concurrent_sessions` (default **16**). Concurrency is a feature (§5.11), so this is
+  only a resource guard. Beyond it, the server returns `Error{code:Busy}` and the UI shows
+  "Server busy: 16 tests are already running".
+- Presence connections (control sockets with no active test) don't count toward the limit.
 
 ### 6.2 HTTP API
 
@@ -346,6 +420,7 @@ enum ServerMsg {
 | `PATCH /api/runs/{id}` | Update the label or notes |
 | `DELETE /api/runs/{id}` | Delete a run |
 | `GET /api/labels?device=` | Distinct labels with run counts, last-used time and the median of the last 5 runs. Ordered by last use, which feeds the label chips (§7.7). |
+| `GET /api/groups/{id}` | A group test: members, per-device results, aggregate, shares, fairness |
 | `GET /api/compare?labels=a,b` or `?ids=…` | Data for the compare view: per-label medians or individual runs |
 | `GET /api/runs/export?format=csv\|json` | Export history |
 
@@ -360,6 +435,7 @@ RunResult {
   transport: "websocket" | "http", profile, streams,
   client: { ip, user_agent, device_id, device_name },
   tls: bool,
+  group_id?, concurrency: { peers_max, overlap_ms, overlap_ratio },
   summary: {
     download_bps?, upload_bps?,
     latency_ms?, jitter_ms?,
@@ -395,7 +471,7 @@ Three sources, each used for a different thing:
 **Inspired by, not copied.** Unloan is a CommBank brand. The project does not use its name,
 logo, illustrations or proprietary font files, and nothing in the UI suggests a connection to
 it. Where Unloan uses a licensed typeface, we use the closest open-licensed equivalent
-(OFL / Apache), **self-hosted** inside the binary (§2.1 goal 8: no external requests).
+(OFL / Apache), **self-hosted** inside the binary (§2.1 goal 9: no external requests).
 
 Goal: **sleek, modern, calm**. Generous whitespace, confident type, few colors used
 deliberately, and motion that explains what the test is doing rather than decorating it.
@@ -418,11 +494,24 @@ manual toggle. Components reference tokens only and never raw values.
 | Depth | `--shadow-1`, `--shadow-2`, `--blur-glass` | Cards and the raised hero |
 | Motion | `--ease-out`, `--ease-spring`, `--dur-fast` (120 ms), `--dur-base` (240 ms), `--dur-slow` (480 ms) | §7.3 |
 
-**Capturing the values.** The concrete values are collected from the live site, either by
-running a small DevTools snippet on unloan.com.au that tallies computed colors, fonts and radii
-and dumps the `:root` custom properties, or from screenshots. They are then recorded in
-`docs/design/tokens.md` with the open font chosen for each role. Until then, the M0
-placeholder palette stays in place. *(Open question 1.)*
+**Values (captured 2026-10-10, see `docs/design/tokens.md`; implemented in `style/_tokens.scss`):**
+- **Palette**: monochrome brand (`#101010` on `#ffffff`), with `#f7f7f7` surfaces and `#dedede` /
+  `#cccccc` hairlines. Accents are used sparingly: a pink→amber gradient (`#ff7bad → #ffba2f`,
+  used for the brand mark) and lime `#f2ff00` (never as text on light).
+- **Fonts**: Unloan's proprietary display font is replaced by **IBM Plex Mono 500** for
+  display headings. **Inter** (variable, 100–900) is used for UI, body and numbers. Numbers are
+  Inter 700 with tabular numerals. Both fonts are OFL and self-hosted in `public/fonts/`.
+- **Tracking**: headings −3%.
+- **Shape**: cards 16–24 px, inputs and chips 8 px, every button a 32 px pill.
+- **Depth**: flat fills, with a diffuse `0 3px 40px rgba(0,0,0,.07)` only on floating
+  controls. The nav uses frosted glass (`blur(20px)`).
+- **Motion**: color-only button feedback at 200 ms, segmented toggle at 350 ms, reveals at
+  600 ms `cubic-bezier(.25,1,.5,1)`.
+- **Data series**, validated with the dataviz color checks (all-pairs CVD and contrast, both
+  themes): download `#0066cc`, upload `#d6457f`, latency `#bf7400` (dark theme: `#3987e5`,
+  `#d55181`, `#c98500`). **Per-device colors** in group tests use the validated 8-slot
+  categorical palette in fixed order. Above 3 devices, charts add direct labels (identity is
+  never carried by color alone).
 
 ### 7.3 Motion
 
@@ -449,7 +538,7 @@ replaced by a static gradient, count-ups become crossfades, and view transitions
 
 ### 7.4 Layout and components
 
-- **Theme**: dark-first, with a light theme. Follows `prefers-color-scheme` by default, with a manual toggle.
+- **Theme**: **light-first**, like Unloan (white page, `#f7f7f7` cards, near-black type and pill buttons). The dark theme is derived from Unloan's dark sections (`#171d26`), since Unloan has no dark mode. Follows `prefers-color-scheme` by default, with a manual toggle.
 - **Hero**:
   - a large display-weight headline number (current or final download speed) over the packet-flow canvas
   - the phase timeline
@@ -557,6 +646,34 @@ help?" by comparing labels instead of reading individual runs.
 - Live values are announced politely (`aria-live="polite"`), throttled to phase completion.
 - Full keyboard support, and visible focus rings in the brand color.
 
+### 7.11 Devices panel and group test
+
+- **Devices panel** on the test page: a horizontal strip of device cards (it wraps to a list on
+  mobile). Each card shows:
+  - device-type icon, name and label
+  - "You" on the current device
+  - state: *Idle*, or *Testing · Download* with a live speed and a tiny sparkline in the
+    device's categorical color
+
+  New devices slide in, and leaving devices fade out (`--dur-slow`). When nobody else is
+  connected, the panel collapses to a single line: "Only this device is connected".
+- **While others are testing**, the packet-flow canvas also shows their traffic as faint
+  particles in their device colors, so it is visible that the network is shared.
+- **Before a solo test** while others are active, an inline prompt offers **Wait for them** or
+  **Test anyway** (§5.11). Results that overlapped carry a "Shared network" badge.
+- **Test together**:
+  - The host taps it, and every other device sees an invite toast with **Join**.
+  - The host sees members join live, then taps **Start**, and all devices count down 3-2-1.
+  - During the test, each device shows one lane per member (live bar and speed) plus a big
+    **Total** number.
+  - The **result** shows:
+    - a stacked area chart of each device's throughput over time, with direct labels
+    - the aggregate download and upload
+    - each device's share as a percentage
+    - a fairness meter (Jain's index shown as "Even / Uneven split")
+    - the server-bottleneck warning, when it applies
+  - Group results appear in history as one expandable row.
+
 ## 8. Storage
 
 SQLite at `SPEEDTEST_DB_PATH` (default `/data/speedtest.db`). Migrations are embedded with
@@ -576,6 +693,9 @@ CREATE TABLE runs (
   device_id     TEXT,                      -- random per-browser ID (§7.7)
   device_name   TEXT,
   tls           INTEGER NOT NULL DEFAULT 0,
+  group_id      TEXT REFERENCES groups(id),
+  peers_max     INTEGER NOT NULL DEFAULT 0,  -- other sessions active during the run
+  overlap_ratio REAL NOT NULL DEFAULT 0,
   download_bps  REAL, upload_bps REAL,
   latency_ms    REAL, jitter_ms  REAL,
   down_loaded_latency_ms REAL, up_loaded_latency_ms REAL,
@@ -585,6 +705,13 @@ CREATE TABLE runs (
   detail_json   TEXT NOT NULL              -- full RunResult (points, phases)
 );
 CREATE INDEX runs_created_at ON runs(created_at DESC);
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY, created_at TEXT NOT NULL, label TEXT,
+  device_count INTEGER NOT NULL,
+  aggregate_download_bps REAL, aggregate_upload_bps REAL,
+  fairness_download REAL, fairness_upload REAL,
+  detail_json TEXT NOT NULL                -- per-device time series and shares
+);
 CREATE INDEX runs_label      ON runs(label, created_at DESC);
 CREATE INDEX runs_device     ON runs(device_id, created_at DESC);
 ```
@@ -621,7 +748,9 @@ speed-test-rs --version | --help
 | `--db-path <FILE>` | `SPEEDTEST_DB_PATH` | `<data-dir>/speedtest.db` | SQLite file (overrides `--data-dir`) |
 | `--no-history` | `SPEEDTEST_HISTORY=false` | history on | Turns run persistence off |
 | `--retention-days <N>` | `SPEEDTEST_RETENTION_DAYS` | – | Auto-prune age |
-| `--max-sessions <N>` | `SPEEDTEST_MAX_SESSIONS` | `4` | Concurrent test sessions |
+| `--max-sessions <N>` | `SPEEDTEST_MAX_SESSIONS` | `16` | Concurrent test sessions (a resource guard; §6.1) |
+| `--no-presence` | `SPEEDTEST_PRESENCE=false` | presence on | Turns off the live devices panel and group tests (§5.11) |
+| `--server-link-mbps <N>` | `SPEEDTEST_SERVER_LINK_MBPS` | auto (Linux) | Server link speed, for the bottleneck warning |
 | `--max-bytes <N>` | `SPEEDTEST_MAX_BYTES` | `2000000000` | Per-request byte cap |
 | – | `SPEEDTEST_AUTH_TOKEN` | – | If set, the API, WebSocket and history require it (§11). Env only, so it doesn't show in `ps`. |
 | `--open` | – | off | Open the UI in the default browser after startup (desktop use) |
@@ -750,7 +879,7 @@ are the supported path.
     pinned `cargo-leptos` release binary. It runs the same two-step build as §10.1, with
     `embed-assets` enabled.
   - **Runtime stage**: today this is `debian:trixie-slim` with a non-root user, the server
-    binary and `site/`. *(Implemented in Milestone 0.)* Once assets are embedded (M6), it
+    binary and `site/`. *(Implemented in Milestone 0.)* Once assets are embedded (M7), it
     becomes `gcr.io/distroless/static` (or `scratch`) with only the musl binary, about 15 MB in total.
 - `HEALTHCHECK` runs `speed-test-rs healthcheck`, a built-in subcommand that calls `/api/health`. The runtime image needs no curl or apt packages, so this works in distroless or scratch images.
 - The release workflow can skip the in-container Rust build and `COPY` the already-built musl
@@ -823,6 +952,7 @@ plainly: the test measures the slowest hop between the browser and the server.
 | End-to-end | Full `quick` profile in Chromium. Asserts all tiles populate, the run saves and appears in history. | `cargo leptos end-to-end` (Playwright) |
 | UI and motion | Visual regression screenshots (light, dark, 360 px, reduced motion). Checks that the animation stays off the measurement path: a `quick` run with particles on and off gives results within 5%. | Playwright |
 | PWA | Manifest is valid, service worker registers over HTTPS (mkcert certificate in CI), the app shell loads offline, and `/api` and `/ws` requests are never served from cache | Playwright |
+| Multi-device | Simulated clients (tokio-tungstenite) for presence fan-out, group lifecycle, server byte-counter rates, fairness math (unit), overlap flagging; Playwright with 3 browser contexts for the panel and group flow | `cargo test --features ssr` + Playwright |
 | Labels and history | First-run default label, last-label prefill, auto-save, chip selection, rename, compare deltas | Playwright + server integration |
 | Accuracy | Run behind `tc netem` / `tc tbf` in a test container (e.g. 100 Mbit, 20 ms delay, 1% loss) and assert results within ±10% | A CI job (Linux runner, privileged) or a manual script |
 | Binary smoke test | For each release target that can run on a CI runner (linux x86_64/arm64, macOS, Windows): copy the binary **alone** into an empty temp directory, start it, and check that `/`, `/api/health`, `/pkg/speed-test-rs.wasm` (`application/wasm`) and the CSS all return 200. Then run `healthcheck`. This catches missing embedded assets. | CI matrix |
@@ -867,9 +997,10 @@ Dockerfile, docker-compose.yml
 | M3 | HTTP mode | `__down`/`__up`, the client HTTP engine, the transport toggle | WebSocket and HTTP results within 10% of each other on a wired LAN |
 | M4 | Packet loss (WebRTC) | str0m endpoint on a single UDP port, signalling over `/ws/control`, client DataChannel engine, a graceful "unavailable" state | netem 1% loss is measured as 1% ± 0.5%. Works with `--network host` and with bridge mode plus `SPEEDTEST_PUBLIC_IP`. |
 | M5 | History, labels and compare | SQLite storage, run CRUD API, **auto-save**, **prefilled labels** (last-used, or `<device> · <date>`), label chips, device ID and name, `/history` grouped by label, `/compare` with deltas, `/runs/{id}`, export, retention, view transitions | Runs persist across restarts. A first-time user can run, save and compare two rooms **without typing anything**. Comparing 3 labels works on mobile. |
-| M6 | Standalone binary | `embed-assets` feature with `rust-embed` and the asset handler (MIME types, compression, cache headers). `clap` CLI and §9 options. Platform data dirs. LAN URL and QR printout. `--open`. `dist` recipe. `contrib/` service files. Distroless Docker runtime. | The binary, copied **alone** into an empty directory on Linux, macOS and Windows, serves a fully hydrated, styled UI. The binary smoke test (§12) passes. |
-| M7 | PWA and HTTPS | Manifest, icons, service worker (app shell only, never `/api` or `/ws`), update toast, iOS meta tags. Optional `rustls` TLS listener (`--tls-*`). README guides for mkcert and reverse proxies. | Installs on Android Chrome and desktop Chrome/Edge over HTTPS. Adds to the iOS home screen. The offline shell shows the friendly offline page. |
-| M8 | Release | Hand-written GitHub Actions `release.yml` (§10.1) producing all targets with `SHA256SUMS` and a multi-arch GHCR image from the same binaries. `ci.yml` (fmt, clippy, tests, e2e, smoke). README with screenshots and install instructions for both. CONTRIBUTING. v0.1.0 tag. | Pushing tag `v0.1.0` publishes a GitHub Release whose binaries run on every target, and `docker run ghcr.io/puttyman/speed-test-rs:0.1.0` works on amd64 and arm64. |
+| M6 | Multi-device live view and group test | Always-on `/ws/control` presence, server-side per-session byte counters and a 4 Hz `Peers` broadcast, Devices panel, overlap flagging and the Wait / Test anyway prompt, group create/join/start with the time-based `concurrent` profile, aggregate, shares and Jain fairness, server-bottleneck warning, `groups` table, Hide me, `--no-presence` | 3 browsers (2 headless + 1 real) see each other within 1 s. A group test of 3 clients against a `tc tbf`-limited link gives an aggregate within 10% of the limit and fairness ≥ 0.9. Overlap flags appear on solo runs that overlap. |
+| M7 | Standalone binary | `embed-assets` feature with `rust-embed` and the asset handler (MIME types, compression, cache headers). `clap` CLI and §9 options. Platform data dirs. LAN URL and QR printout. `--open`. `dist` recipe. `contrib/` service files. Distroless Docker runtime. | The binary, copied **alone** into an empty directory on Linux, macOS and Windows, serves a fully hydrated, styled UI. The binary smoke test (§12) passes. |
+| M8 | PWA and HTTPS | Manifest, icons, service worker (app shell only, never `/api` or `/ws`), update toast, iOS meta tags. Optional `rustls` TLS listener (`--tls-*`). README guides for mkcert and reverse proxies. | Installs on Android Chrome and desktop Chrome/Edge over HTTPS. Adds to the iOS home screen. The offline shell shows the friendly offline page. |
+| M9 | Release | Hand-written GitHub Actions `release.yml` (§10.1) producing all targets with `SHA256SUMS` and a multi-arch GHCR image from the same binaries. `ci.yml` (fmt, clippy, tests, e2e, smoke). README with screenshots and install instructions for both. CONTRIBUTING. v0.1.0 tag. | Pushing tag `v0.1.0` publishes a GitHub Release whose binaries run on every target, and `docker run ghcr.io/puttyman/speed-test-rs:0.1.0` works on amd64 and arm64. |
 
 ## 15. Future ideas (post-v1)
 
@@ -892,12 +1023,9 @@ Dockerfile, docker-compose.yml
 
 ## 16. Open questions
 
-1. **Unloan-inspired token values** *(blocks M1 design work)*: the exact colors, typefaces,
-   radii and shadows still need to be captured from unloan.com.au (DevTools snippet or
-   screenshots, §7.2), and an open-licensed font chosen for each Unloan font.
-2. **Parallel streams default**: *proposal*: 1 stream for `standard` (Cloudflare-like,
+1. **Parallel streams default**: *proposal*: 1 stream for `standard` (Cloudflare-like,
    reflects single-flow behavior), 4 for `extended`.
-3. **str0m vs webrtc-rs**: str0m is preferred. Confirm during M4 that its SCTP handles 1000
+2. **str0m vs webrtc-rs**: str0m is preferred. Confirm during M4 that its SCTP handles 1000
    small unreliable messages without head-of-line effects. *(Technical, decided during M4.)*
 
 ### Decided
@@ -909,6 +1037,8 @@ Dockerfile, docker-compose.yml
 | Release tooling | Hand-written GitHub Actions (§10.1) |
 | Labels | Free text with chips, auto-saved and prefilled (§7.7) |
 | Units | Mbps by default, with a toggle for MB/s and auto-scaling to Gbps / GB/s (§7.6) |
-| Visual style | Unloan-inspired color, fonts and look and feel. Our own copy (§7.1, §7.5). |
+| Visual style | Unloan-inspired color, fonts and look and feel. Light-first, with a derived dark theme. IBM Plex Mono + Inter (OFL). Our own copy (§7.1, §7.2, §7.5). |
+| Multi-device | Live presence over `/ws/control`, synchronized group tests, overlap flagging (§5.11, §7.11) |
+| Dependencies | Latest stable releases. Leptos 0.9 adopted once stable (§4.1). |
 | Motion | Packet flow, count-up, live chart, phase timeline, result reveal, view transitions (§7.3) |
 | PWA | Yes. Full install and offline support over HTTPS (§7.9). |

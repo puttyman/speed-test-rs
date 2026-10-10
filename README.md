@@ -34,7 +34,7 @@ the binary, so nothing else is needed:
 ```
 
 > Not available yet: today the release binary still needs the `target/site` folder next to it.
-> Embedding is milestone M6 in [`docs/SPEC.md`](docs/SPEC.md#101-standalone-binary).
+> Embedding is milestone M7 in [`docs/SPEC.md`](docs/SPEC.md#101-standalone-binary).
 
 ### Docker
 

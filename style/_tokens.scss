@@ -1,0 +1,165 @@
+// Design tokens - Unloan-inspired (see docs/design/tokens.md and SPEC §7.2).
+// Components must reference these custom properties, never raw values.
+
+@font-face {
+	font-family: "Inter";
+	src: url("/fonts/inter-latin-var.woff2") format("woff2");
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "IBM Plex Mono";
+	src: url("/fonts/ibm-plex-mono-latin-500.woff2") format("woff2");
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+:root {
+	color-scheme: light;
+
+	// Brand: monochrome, near-black on white
+	--color-brand: #101010;
+	--color-brand-hover: #353535;
+	--color-brand-active: #676767;
+	--color-brand-soft: #efefef;
+	--color-on-brand: #ffffff;
+	--color-accent: #f2ff00; // lime, sparingly (never as text on light)
+	--gradient-accent: linear-gradient(90deg, #ff7bad, #ffba2f);
+
+	// Neutrals
+	--color-bg: #ffffff;
+	--color-surface: #f7f7f7;
+	--color-surface-hover: #efefef;
+	--color-surface-raised: #ffffff;
+	--color-border: #dedede;
+	--color-border-strong: #cccccc;
+	--color-text: #101010;
+	--color-text-body: #29292b;
+	--color-text-muted: #6d6b6d;
+	--color-link: #0066cc;
+	--color-focus: #101010;
+	--nav-bg: rgba(255, 255, 255, 0.9);
+
+	// Data series (validated: CVD + contrast on #ffffff, all-pairs)
+	--series-download: #0066cc;
+	--series-upload: #d6457f;
+	--series-latency: #bf7400;
+
+	// Status (quality badges): soft background + strong text
+	--status-great-bg: #eff3f0;
+	--status-great-fg: #005011;
+	--status-good-bg: #eff3f0;
+	--status-good-fg: #007d1b;
+	--status-average-bg: #fff4e7;
+	--status-average-fg: #7d4900;
+	--status-poor-bg: #fbeff0;
+	--status-poor-fg: #d70015;
+	--status-bad-bg: #fbeff0;
+	--status-bad-fg: #87000d;
+
+	// Typography
+	--font-display: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+	--font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--font-numeric: "Inter", system-ui, sans-serif;
+	--tracking-tight: -0.03em; // headings: -3% of font size
+	--tracking-body: -0.03em;
+	--text-xs: 0.75rem;
+	--text-sm: 0.875rem;
+	--text-md: 1rem;
+	--text-lg: 1.5rem;
+	--text-xl: clamp(1.75rem, 1.2rem + 1.6vw, 2rem);
+	--text-display: clamp(2.5rem, 1.6rem + 4vw, 5rem);
+	--text-hero: clamp(3.5rem, 2rem + 7vw, 9.375rem);
+
+	// Shape
+	--radius-sm: 8px;
+	--radius-md: 16px;
+	--radius-lg: 24px;
+	--radius-pill: 32px;
+
+	// Space (4px base)
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-12: 48px;
+	--space-16: 64px;
+	--space-24: 96px;
+	--container: 1170px;
+
+	// Depth
+	--shadow-1: 0 3px 40px 0 rgba(0, 0, 0, 0.07);
+	--shadow-1-hover: 0 6px 32px 0 rgba(0, 0, 0, 0.12);
+	--shadow-2: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+	--blur-glass: 20px;
+
+	// Motion
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-out: cubic-bezier(0, 0, 0.2, 1);
+	--ease-soft: cubic-bezier(0.25, 1, 0.5, 1);
+	--dur-fast: 150ms;
+	--dur-base: 200ms;
+	--dur-control: 350ms;
+	--dur-slow: 600ms;
+}
+
+// Dark theme: derived from Unloan's dark sections (#171d26); Unloan itself has none.
+@mixin dark-tokens {
+	color-scheme: dark;
+	--color-brand: #ffffff;
+	--color-brand-hover: #dedede;
+	--color-brand-active: #a2a2a2;
+	--color-brand-soft: #2a313c;
+	--color-on-brand: #101010;
+	--color-bg: #171d26;
+	--color-surface: #202733;
+	--color-surface-hover: #2a313c;
+	--color-surface-raised: #252d3a;
+	--color-border: #323a46;
+	--color-border-strong: #404042;
+	--color-text: #ffffff;
+	--color-text-body: #e6e7ea;
+	--color-text-muted: #a3a8b1;
+	--color-link: #6aa8ff;
+	--color-focus: #ffffff;
+	--nav-bg: rgba(23, 29, 38, 0.85);
+	--series-download: #3987e5;
+	--series-upload: #d55181;
+	--series-latency: #c98500;
+	--status-great-bg: #12301b;
+	--status-great-fg: #7fd99a;
+	--status-good-bg: #12301b;
+	--status-good-fg: #5cc777;
+	--status-average-bg: #3a2a10;
+	--status-average-fg: #ffc46b;
+	--status-poor-bg: #3a1418;
+	--status-poor-fg: #ff8a93;
+	--status-bad-bg: #3a1418;
+	--status-bad-fg: #ff6b76;
+	--shadow-1: 0 3px 40px 0 rgba(0, 0, 0, 0.35);
+	--shadow-1-hover: 0 6px 32px 0 rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:where(:not([data-theme="light"])) {
+		@include dark-tokens;
+	}
+}
+
+:root[data-theme="dark"] {
+	@include dark-tokens;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--dur-fast: 0ms;
+		--dur-base: 0ms;
+		--dur-control: 0ms;
+		--dur-slow: 0ms;
+	}
+}
