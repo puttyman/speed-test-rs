@@ -1,0 +1,80 @@
+// Result reveal (SPEC §7.3) and reduced motion. Only transform and opacity
+// animate.
+
+.is-revealed {
+	.reveal {
+		animation: reveal-in var(--dur-slow) var(--ease-soft) both;
+		animation-delay: calc(var(--reveal-i, 0) * 60ms);
+	}
+
+	.badge-flip {
+		animation-name: badge-flip;
+		transform-origin: 50% 50%;
+	}
+
+	.detail-card .ref-line,
+	.detail-card .whisker,
+	.detail-card .box,
+	.detail-card .dots {
+		animation: chart-draw 900ms var(--ease-soft) both;
+		animation-delay: 300ms;
+	}
+
+	.detail-card .box,
+	.detail-card .dots {
+		transform-box: fill-box;
+		transform-origin: left center;
+	}
+}
+
+@keyframes reveal-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+}
+
+@keyframes badge-flip {
+	from {
+		opacity: 0;
+		transform: perspective(400px) rotateX(90deg);
+	}
+}
+
+@keyframes chart-draw {
+	from {
+		opacity: 0;
+		transform: scaleX(0.6);
+	}
+}
+
+// In-app toggle (data-motion on <html>) and the OS setting.
+@mixin no-motion {
+	--dur-fast: 0ms;
+	--dur-base: 0ms;
+	--dur-control: 0ms;
+	--dur-slow: 0ms;
+
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		animation-delay: 0ms !important;
+		scroll-behavior: auto !important;
+	}
+
+	.start-button::after {
+		animation: none !important;
+	}
+}
+
+:root[data-motion="reduce"] {
+	@include no-motion;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root:not([data-motion="full"]) {
+		@include no-motion;
+	}
+}

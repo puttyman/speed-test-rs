@@ -1,0 +1,121 @@
+// Label field (SPEC §7.7) and the "Saved · Edit label" notice.
+
+.label-picker {
+	display: flex;
+	justify-content: center;
+	width: 100%;
+	max-width: 100%;
+}
+
+.label-button {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: min(100%, 420px);
+	min-height: 40px;
+	padding: var(--space-1) var(--space-3) var(--space-1) var(--space-3);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-pill);
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	cursor: pointer;
+	transition:
+		border-color var(--dur-fast) var(--ease-standard),
+		box-shadow var(--dur-fast) var(--ease-standard);
+
+	&:hover:not(:disabled) {
+		border-color: var(--color-border-strong);
+		box-shadow: var(--shadow-1);
+	}
+
+	&:disabled {
+		cursor: default;
+		opacity: 0.7;
+	}
+
+	.icon {
+		width: 16px;
+		height: 16px;
+		color: var(--color-text-muted);
+	}
+
+	.label-text {
+		min-width: 2ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.label-edit .icon {
+		width: 14px;
+		height: 14px;
+	}
+}
+
+.label-editor {
+	display: grid;
+	gap: var(--space-3);
+	width: min(480px, 100%);
+	padding: var(--space-3);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	box-shadow: var(--shadow-1);
+	text-align: left;
+
+	.chips {
+		justify-content: flex-start;
+	}
+}
+
+.label-input-row {
+	display: flex;
+	gap: var(--space-2);
+
+	.text-input {
+		min-height: 36px;
+		flex: 1;
+		min-width: 0;
+	}
+}
+
+.save-notice {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	min-height: 32px;
+	color: var(--color-text-muted);
+	font-size: var(--text-sm);
+
+	.saved {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		max-width: 100%;
+		overflow-wrap: anywhere;
+	}
+
+	.saved-check .icon {
+		width: 16px;
+		height: 16px;
+		color: var(--status-good-fg);
+	}
+
+	.save-error {
+		color: var(--status-poor-fg);
+	}
+}
+
+.rename-form {
+	display: flex;
+	gap: var(--space-2);
+	width: min(360px, 100%);
+
+	.text-input {
+		flex: 1;
+		min-width: 0;
+	}
+}
