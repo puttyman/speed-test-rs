@@ -7,6 +7,8 @@ use leptos::config::{Env, LeptosOptions, ReloadWSProtocol};
 
 use super::assets::Assets;
 use super::config::{Config, process_env};
+use super::groups::Groups;
+use super::presence;
 use super::storage::Storage;
 use super::ws::MeasureState;
 
@@ -29,6 +31,8 @@ pub struct AppState {
     /// Run history; `None` when history is off (`--no-history`). Opened asynchronously by
     /// `main` through [`Storage::from_config`](super::storage::Storage::from_config).
     pub storage: Option<Storage>,
+    /// Group tests (SPEC §5.11); disabled with `--no-presence`.
+    pub groups: Groups,
     // Future: `pub sessions: SessionRegistry`, `pub db: Option<SqlitePool>`, ...
 }
 
@@ -37,12 +41,19 @@ impl AppState {
         let leptos = leptos_options(&config, process_env);
         let assets = Assets::from_config(&config);
         let measure = MeasureState::new(&config);
+        let groups = Groups::new(measure.sessions.clone(), &config);
+        // Presence broadcasts and group expiry (only inside a Tokio runtime).
+        if config.presence {
+            presence::spawn_broadcaster(&measure.sessions);
+            groups.start_reaper();
+        }
         Self {
             leptos,
             config: Arc::new(config),
             assets,
             measure,
             storage: None,
+            groups,
         }
     }
 }

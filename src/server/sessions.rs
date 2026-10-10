@@ -265,6 +265,16 @@ impl Session {
         lock(&self.state).last_activity = Instant::now();
     }
 
+    /// Number of sockets currently attached (any role).
+    pub fn attached_sockets(&self) -> usize {
+        lock(&self.state).sockets.len()
+    }
+
+    /// Number of control sockets currently attached.
+    pub fn control_sockets(&self) -> usize {
+        lock(&self.state).sockets_with(Role::Control)
+    }
+
     fn snapshot(&self, now: Instant) -> SessionSnapshot {
         let st = lock(&self.state);
         SessionSnapshot {
@@ -574,6 +584,43 @@ impl SessionRegistry {
         Some(sweep_overlap(events, window))
     }
 
+    /// The activity window of `session`'s most recent run: from the start of its first
+    /// transfer that began at or after `since` to the end of its last one (or now). `None`
+    /// for an unknown session or when it moved no data since then.
+    ///
+    /// A page keeps one session ID across runs (presence, SPEC §5.11), so the whole activity
+    /// log can span several runs; callers pass `since ≈ now − run duration` to get the
+    /// window of the run that just finished.
+    pub fn recent_activity_window(&self, session: Uuid, since: Instant) -> Option<Range<Instant>> {
+        let now = Instant::now();
+        let s = self.get(session)?;
+        let st = lock(&s.state);
+        let recent = |sp: &&Span| sp.end.is_none_or(|end| end >= since);
+        let first = st.activity.iter().find(recent)?;
+        let last = st.activity.back().unwrap_or(first);
+        Some(first.start.max(since)..last.end.unwrap_or(now))
+    }
+
+    /// A snapshot of one session.
+    pub fn snapshot_of(&self, session: Uuid) -> Option<SessionSnapshot> {
+        let s = self.get(session)?;
+        Some(s.snapshot(Instant::now()))
+    }
+
+    /// A handle that doesn't keep the registry alive (for background tasks).
+    pub fn downgrade(&self) -> WeakRegistry {
+        WeakRegistry(Arc::downgrade(&self.inner))
+    }
+
+    /// Resets the presence phase to idle, keeping the label (a control socket that reported
+    /// a test phase closed without reporting idle, e.g. an aborted run).
+    pub fn clear_phase(&self, session: Uuid) {
+        if let Some(s) = self.get(session) {
+            lock(&s.state).phase = None;
+            self.inner.changed();
+        }
+    }
+
     /// Stores a control socket's `Status`.
     pub fn set_status(&self, session: Uuid, phase: Option<Phase>, label: Option<String>) {
         if let Some(s) = self.get(session) {
@@ -612,6 +659,17 @@ impl SessionRegistry {
             .iter()
             .filter(|tx| tx.try_send(msg.clone()).is_ok())
             .count()
+    }
+}
+
+/// A weak reference to a [`SessionRegistry`], from [`SessionRegistry::downgrade`].
+#[derive(Clone)]
+pub struct WeakRegistry(Weak<Inner>);
+
+impl WeakRegistry {
+    /// The registry, if it still exists.
+    pub fn upgrade(&self) -> Option<SessionRegistry> {
+        self.0.upgrade().map(|inner| SessionRegistry { inner })
     }
 }
 

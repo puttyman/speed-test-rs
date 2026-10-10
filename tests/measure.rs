@@ -144,11 +144,18 @@ async fn next_frame(ws: &mut Ws) -> Option<Message> {
     }
 }
 
-/// The next JSON message (panics on binary frames or close).
+/// The next JSON message other than a presence snapshot (panics on binary frames or close).
 async fn recv(ws: &mut Ws) -> ServerMsg {
-    match next_frame(ws).await {
-        Some(Message::Text(t)) => ServerMsg::from_json(t.as_str()).expect("valid server JSON"),
-        other => panic!("expected a text frame, got {other:?}"),
+    loop {
+        match next_frame(ws).await {
+            Some(Message::Text(t)) => {
+                match ServerMsg::from_json(t.as_str()).expect("valid server JSON") {
+                    ServerMsg::Peers { .. } => continue,
+                    msg => return msg,
+                }
+            }
+            other => panic!("expected a text frame, got {other:?}"),
+        }
     }
 }
 
@@ -587,7 +594,9 @@ async fn control_messages() {
     let msg = expect_error(&mut ws, ErrorCode::NotFound).await;
     assert_eq!(msg, "packet loss test unavailable");
     send(&mut ws, &ClientMsg::GroupCreate).await;
-    expect_error(&mut ws, ErrorCode::NotFound).await;
+    assert!(matches!(recv(&mut ws).await, ServerMsg::GroupUpdate { .. }));
+    send(&mut ws, &ClientMsg::GroupStart).await;
+    expect_error(&mut ws, ErrorCode::Conflict).await;
     send(&mut ws, &ClientMsg::Ping { seq: 1 }).await;
     expect_error(&mut ws, ErrorCode::BadRequest).await;
     ws.send(Message::text("{\"t\":\"nope\"}")).await.unwrap();

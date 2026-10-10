@@ -1,5 +1,25 @@
 //! Executes a [`Profile`] (SPEC §5.3): walks it with [`RampState`] (ramp
 //! halting, time cap), feeds [`Measurements`] and builds the [`RunResult`].
+//!
+//! **Timed steps** (the group `concurrent` profile, SPEC §5.11) follow a
+//! schedule: consecutive timed steps end at `start + Σ durations`, measured
+//! from the first one's start (the group start instant when the run was
+//! started with [`start_at`](super::start_at)), so every device loads the
+//! network at the same moments even if a probe or request runs a little long.
+//!
+//! - `TimedLatency`: idle probes, 50 ms apart, until the step's end.
+//! - `TimedDownload` / `TimedUpload`: **back-to-back requests**, not one huge
+//!   request aborted at the deadline. Each request is sized from the rate of
+//!   the previous one so that it ends about when the step ends (and doubles
+//!   while requests are shorter than 250 ms); no request starts within 30 ms
+//!   of the end. This keeps the data sockets' request/ack protocol intact (no
+//!   aborts, no drained leftovers) while overrunning the schedule by at most a
+//!   fraction of one request. Every request is recorded as a bandwidth sample
+//!   and the live meter runs throughout. Loaded-latency probes run for the
+//!   whole step, their elapsed time counted from the step's start (not from
+//!   each short request), so `loaded_request_min_ms` only drops the first
+//!   250 ms of the step.
+//! - `Pause`: waits until the step's scheduled end.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -12,6 +32,7 @@ use uuid::Uuid;
 use super::http_transport::HttpTransport;
 use super::js::{AbortFlag, EngineError, Result, location_origin, now, sleep, window};
 use super::loaded_latency::{live_loop, probe_loop};
+use super::util::next_timed_size;
 use super::ws_transport::{WsTransport, open};
 use super::{
     EngineEvent, EngineOptions, PacketLossContext, PacketLossParams, Sample, UploadBuffer,
@@ -22,10 +43,12 @@ use crate::model::result::{
     BandwidthPoint, ClientInfo, Measurements, RunResult, Transport, summarize,
 };
 
-/// Timed steps grow the request size while requests are shorter than this.
-const TIMED_GROW_BELOW_MS: f64 = 250.0;
 /// Gap between probes of a timed latency step.
 const TIMED_LATENCY_GAP_MS: u32 = 50;
+/// No new request of a timed transfer starts this close to the step's end.
+const TIMED_MIN_REMAINING_MS: f64 = 30.0;
+/// First request size of a timed transfer.
+const TIMED_FIRST_BYTES: u64 = 1_000_000;
 
 /// The measurement link of a run.
 pub enum Link {
@@ -67,9 +90,17 @@ impl Link {
 
 /// Runs `opts` to completion or abort, then emits exactly one of
 /// `Finished`, `Error` or `Aborted`. Sockets are closed before that event.
-pub async fn run(opts: EngineOptions, emit: Rc<dyn Fn(EngineEvent)>, abort: AbortFlag) {
+///
+/// With `start_at` (a `performance.now()` time), the sockets are opened right
+/// away and the first step waits until then (group countdown).
+pub async fn run(
+    opts: EngineOptions,
+    emit: Rc<dyn Fn(EngineEvent)>,
+    abort: AbortFlag,
+    start_at: Option<f64>,
+) {
     let outcome = {
-        let work = pin!(run_inner(&opts, &*emit));
+        let work = pin!(run_inner(&opts, &*emit, start_at));
         match select(work, pin!(abort.wait())).await {
             Either::Left((r, _)) => Some(r),
             Either::Right(_) => None,
@@ -93,10 +124,16 @@ struct Run<'a> {
     measurements: RefCell<Measurements>,
     request_start: Cell<f64>,
     origin: String,
+    /// Scheduled end of the previous timed step (`None` after a sized step).
+    timed_clock: Cell<Option<f64>>,
 }
 
-async fn run_inner(opts: &EngineOptions, emit: &dyn Fn(EngineEvent)) -> Result<RunResult> {
-    let t0 = now();
+async fn run_inner(
+    opts: &EngineOptions,
+    emit: &dyn Fn(EngineEvent),
+    start_at: Option<f64>,
+) -> Result<RunResult> {
+    let mut t0 = now();
     let config = &opts.config;
     let origin = if opts.origin.is_empty() {
         location_origin().ok_or_else(|| EngineError::Connect("no page origin".into()))?
@@ -143,6 +180,18 @@ async fn run_inner(opts: &EngineOptions, emit: &dyn Fn(EngineEvent)) -> Result<R
         server_name: control.welcome.server_name.clone(),
         server_version: control.welcome.server_version.clone(),
     });
+    // Group countdown: connected early, start on the shared instant. If the
+    // connection took longer than the countdown, the schedule still counts
+    // from the shared instant, so this device catches up.
+    let mut timed_clock = None;
+    if let Some(at) = start_at {
+        let wait = at - now();
+        if wait > 0.0 {
+            sleep(wait.ceil() as u32).await;
+        }
+        t0 = now();
+        timed_clock = Some(at);
+    }
 
     let run = Run {
         opts,
@@ -153,6 +202,7 @@ async fn run_inner(opts: &EngineOptions, emit: &dyn Fn(EngineEvent)) -> Result<R
         measurements: RefCell::new(Measurements::new()),
         request_start: Cell::new(f64::NAN),
         origin,
+        timed_clock: Cell::new(timed_clock),
     };
     let mut ramp = RampState::new(&opts.profile, config);
     while let Some((index, step)) = ramp.next_step(now() - t0) {
@@ -164,7 +214,7 @@ async fn run_inner(opts: &EngineOptions, emit: &dyn Fn(EngineEvent)) -> Result<R
         // Presence update; failure to send is not fatal.
         let _ = control.send(&ClientMsg::Status {
             phase: Some(step.phase()),
-            label: None,
+            label: opts.label.clone(),
         });
         let status = match run.step(&step, &mut ramp, &control).await {
             Ok(s) => s,
@@ -185,7 +235,7 @@ async fn run_inner(opts: &EngineOptions, emit: &dyn Fn(EngineEvent)) -> Result<R
     ramp.skip_remaining();
     let _ = control.send(&ClientMsg::Status {
         phase: Some(Phase::Idle),
-        label: None,
+        label: opts.label.clone(),
     });
 
     let m = run.measurements.into_inner();
@@ -233,6 +283,7 @@ impl Run<'_> {
     ) -> Result<PhaseStatus> {
         match *step {
             Step::Latency { num_packets } => {
+                self.timed_clock.set(None);
                 let mut done = 0;
                 for _ in 0..num_packets {
                     if ramp.time_up(self.elapsed()) {
@@ -243,7 +294,10 @@ impl Run<'_> {
                 }
                 Ok(status_of(done))
             }
-            Step::Download { .. } | Step::Upload { .. } => self.transfer_step(step, ramp).await,
+            Step::Download { .. } | Step::Upload { .. } => {
+                self.timed_clock.set(None);
+                self.transfer_step(step, ramp).await
+            }
             Step::PacketLoss {
                 num_packets,
                 batch_size,
@@ -251,6 +305,7 @@ impl Run<'_> {
                 responses_wait_ms,
                 connection_timeout_ms,
             } => {
+                self.timed_clock.set(None);
                 let Some(probe) = &self.opts.packet_loss else {
                     return Ok(PhaseStatus::Skipped);
                 };
@@ -277,20 +332,28 @@ impl Run<'_> {
                 }
             }
             Step::TimedLatency { duration_ms } => {
-                let start = now();
+                let end = self.timed_window(duration_ms).await;
                 let mut done = 0;
-                while now() - start < f64::from(duration_ms) && !ramp.time_up(self.elapsed()) {
+                while now() < end && !ramp.time_up(self.elapsed()) {
                     self.idle_probe().await?;
                     done += 1;
-                    sleep(TIMED_LATENCY_GAP_MS).await;
+                    let left = end - now();
+                    if left > 0.0 {
+                        sleep((left.ceil() as u32).min(TIMED_LATENCY_GAP_MS)).await;
+                    }
                 }
                 Ok(status_of(done))
             }
             Step::TimedDownload { duration_ms } | Step::TimedUpload { duration_ms } => {
-                self.timed_transfer(step, duration_ms, ramp).await
+                let end = self.timed_window(duration_ms).await;
+                self.timed_transfer(step, end, ramp).await
             }
             Step::Pause { duration_ms } => {
-                sleep(duration_ms).await;
+                let end = self.timed_window(duration_ms).await;
+                let left = end - now();
+                if left > 0.0 {
+                    sleep(left.ceil() as u32).await;
+                }
                 Ok(PhaseStatus::Done)
             }
         }
@@ -309,7 +372,21 @@ impl Run<'_> {
             .min(self.limits.max_streams.max(1))
     }
 
-    /// Runs one request and records it.
+    /// The end of a timed step of `duration_ms` on the schedule (see the
+    /// module docs). Waits for the step's scheduled start if it lies ahead.
+    async fn timed_window(&self, duration_ms: u32) -> f64 {
+        let begin = self.timed_clock.get().unwrap_or_else(now);
+        let ahead = begin - now();
+        if ahead > 0.0 {
+            sleep(ahead.ceil() as u32).await;
+        }
+        let end = begin + f64::from(duration_ms);
+        self.timed_clock.set(Some(end));
+        end
+    }
+
+    /// Runs one request and records it. The loaded-latency clock starts with
+    /// the request.
     async fn request(
         &self,
         dir: Direction,
@@ -318,9 +395,20 @@ impl Run<'_> {
         bypass: bool,
     ) -> Result<Sample> {
         self.request_start.set(now());
-        let r = self.link.transfer(dir, bytes, streams).await;
+        let r = self.request_in_step(dir, bytes, streams, bypass).await;
         self.request_start.set(f64::NAN);
-        let sample = r?;
+        r
+    }
+
+    /// Runs one request and records it, leaving the loaded-latency clock alone.
+    async fn request_in_step(
+        &self,
+        dir: Direction,
+        bytes: u64,
+        streams: u8,
+        bypass: bool,
+    ) -> Result<Sample> {
+        let sample = self.link.transfer(dir, bytes, streams).await?;
         let point = BandwidthPoint::new(bytes, sample.duration_ms, sample.server_ms);
         self.measurements
             .borrow_mut()
@@ -380,12 +468,12 @@ impl Run<'_> {
         self.with_side_tasks(dir, main).await
     }
 
-    /// Back-to-back requests for `duration_ms`, growing the size while they
-    /// are short.
+    /// Back-to-back requests until `end`, each sized to finish about when the
+    /// step does (see the module docs).
     async fn timed_transfer(
         &self,
         step: &Step,
-        duration_ms: u32,
+        end: f64,
         ramp: &mut RampState,
     ) -> Result<PhaseStatus> {
         let Some(dir) = step.direction() else {
@@ -394,17 +482,24 @@ impl Run<'_> {
         let streams = self.streams(step);
         let cap = (self.limits.max_bytes_per_request * u64::from(streams)).min(1_000_000_000);
         let main = async {
-            let start = now();
-            let mut size = 1_000_000u64.min(cap);
+            // Loaded latency counts from the start of the step.
+            self.request_start.set(now());
+            let mut size = TIMED_FIRST_BYTES.min(cap);
             let mut done = 0;
-            while now() - start < f64::from(duration_ms) && !ramp.time_up(self.elapsed()) {
-                let s = self.request(dir, size, streams, false).await?;
-                done += 1;
-                if s.duration_ms < TIMED_GROW_BELOW_MS && size * 2 <= cap {
-                    size *= 2;
+            let result = loop {
+                let left = end - now();
+                if left < TIMED_MIN_REMAINING_MS || ramp.time_up(self.elapsed()) {
+                    break Ok(status_of(done));
                 }
-            }
-            Ok(status_of(done))
+                let s = match self.request_in_step(dir, size, streams, false).await {
+                    Ok(s) => s,
+                    Err(e) => break Err(e),
+                };
+                done += 1;
+                size = next_timed_size(size, s.duration_ms, end - now(), cap);
+            };
+            self.request_start.set(f64::NAN);
+            result
         };
         self.with_side_tasks(dir, main).await
     }
