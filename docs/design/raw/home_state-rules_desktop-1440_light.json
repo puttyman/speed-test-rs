@@ -1,0 +1,43 @@
+{
+ "note": "Extra capture (not the Step 1 script): :hover/:active/:focus rules matching buttons, nav, cards, links and inputs, read from the same-origin Webflow stylesheet on the home page. Also the result of keyboard-focusing a nav link, and the segmented control's ::before thumb.",
+ "url": "https://www.unloan.com.au/",
+ "viewport": "1440x900",
+ "stateRules": [
+  ".w-input:focus, .w-select:focus { border-color: rgb(56, 152, 236); outline: 0px; }",
+  ".navlink:hover { color: rgb(41, 151, 255); }",
+  ".footer-link:hover { text-decoration: underline; }",
+  ".footer-legal-link:hover { text-decoration: underline; }",
+  ".text-link:hover { text-decoration: underline; }",
+  ".btn-tron-nav.small:hover { background-color: rgb(39, 39, 41); }",
+  ".navlink-new:hover { background-color: rgb(222, 222, 222); border-radius: 0.5rem; text-decoration: none; }",
+  ".nav-btn--get-started:hover { background-color: rgb(39, 39, 41); text-decoration: none; }",
+  ".nav-auth--menu-btn:hover { box-shadow: rgba(0, 0, 0, 0.12) 0px 6px 32px; }",
+  ".subnav-link:hover { background-color: rgb(222, 222, 222); text-decoration: none; }",
+  ".up_btn_black:hover { background-color: rgb(53, 53, 53); text-decoration: none; }",
+  ".up_btn_black:active { outline-offset: -2px; background-color: rgb(103, 103, 103); outline: rgb(136, 136, 136) solid 2px; }",
+  ".up_btn-quick-link:hover { background-color: rgb(222, 222, 222); }",
+  ".up_btn-quick-link:active { background-color: rgb(162, 162, 162); }",
+  ".up_btn_card--white:hover { background-color: rgba(87, 87, 87, 0.08); border-color: rgb(136, 136, 136); text-decoration: none; }",
+  ".up_btn-stroke-md:hover { background-color: var(--brand--background-grey-secondary); border-color: rgb(136, 136, 136); text-decoration: none; }",
+  ".up_btn-stroke-md:active { background-color: rgb(239, 239, 239); border-color: rgb(53, 53, 53); }",
+  ".up_btn-primary-lg:hover { background-color: var(--colour-text--text-secondary-grey); text-decoration: none; }",
+  ".up_btn-primary-lg:active { outline-offset: -2px; background-color: rgb(103, 103, 103); outline: rgb(136, 136, 136) solid 2px; }",
+  ".up_btn-stroke-lg:hover { background-color: var(--brand--background-grey-secondary); border-color: rgb(136, 136, 136); text-decoration: none; }",
+  ".up_btn-stroke-lg:active { background-color: rgb(239, 239, 239); border-color: rgb(53, 53, 53); }",
+  ".up_btn-secondary-lg:hover { background-color: rgb(184, 184, 184); text-decoration: none; }",
+  ".up_btn-secondary-lg:active { outline-offset: -2px; background-color: rgb(162, 162, 162); outline: rgb(184, 184, 184) solid 2px; }",
+  ".content-card:hover { transform: none; }"
+ ],
+ "keyboardFocus": {"element": "a.navlink-new", "focusVisible": true, "outline": "rgb(229, 151, 0) auto 1px", "outlineOffset": "1px", "note": "No site rule sets this colour; it is the browser's default focus ring."},
+ "segmentedThumb": {"selector": ".sp-s_toggle-wrapper::before", "bg": "rgb(255, 255, 255)", "radius": "6px", "shadow": "rgba(0, 0, 0, 0.05) 0px 1px 2px 0px", "transition": "transform 0.35s"},
+ "segmentedTrack": {"selector": ".sp-s_toggle-wrapper", "bg": "rgb(239, 239, 239)", "radius": "8px", "padding": "2px"},
+ "nav": {"selector": "nav.navigation", "height": "72px (60px at 390)", "bg": "rgba(255, 255, 255, 0.9)", "backdropFilter": "blur(20px)"},
+ "nextTailwindStateClasses": [
+  "rounded-lg hover:bg-neutral-300 transition-colors duration-300 (nav links)",
+  "rounded-[32px] bg-neutral-1000 hover:bg-neutral-900 (Get started pill)",
+  "shadow-content-card rounded-[32px] bg-white transition-shadow hover:shadow-[0_6px_32px_0] hover:shadow-black/[0.12] (Log in)",
+  "rounded-[32px] px-10 py-3 transition-colors bg-neutral-100 text-[16px] font-semibold tracking-[-0.48px] hover:bg-neutral-300 (soft CTA)",
+  "rounded-full border-2 border-neutral-400 bg-white transition-colors hover:bg-neutral-100 active:bg-neutral-300 (round icon button)",
+  "flex rounded-md border border-input focus-within:border-black focus-within:ring-1 (input wrapper)"
+ ]
+}

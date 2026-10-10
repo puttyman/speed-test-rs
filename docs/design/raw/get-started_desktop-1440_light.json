@@ -1,0 +1,49 @@
+{
+ "url": "https://www.unloan.com.au/get-started",
+ "viewport": "1440x900",
+ "color": [["rgb(0, 0, 0)",88],["rgb(53, 53, 53)",42],["rgb(103, 103, 103)",12],["rgb(16, 16, 16)",7],["rgb(0, 102, 204)",3],["rgba(0, 0, 0, 0)",1],["rgb(255, 255, 255)",1]],
+ "background": [["rgb(255, 255, 255)",7],["rgb(247, 247, 247)",2],["rgb(16, 16, 16)",1]],
+ "border": [["1px solid rgb(0, 0, 0)",2],["1px solid rgb(136, 136, 136)",2],["1px solid rgb(209, 209, 209)",1]],
+ "font": [
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls normal",61],
+  ["inter, \"inter Fallback\" | 400 | 16px/15px | ls -0.48px",30],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls normal",21],
+  ["inter, \"inter Fallback\" | 400 | 17px/25.5px | ls normal",15],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.42px",7],
+  ["inter, \"inter Fallback\" | 600 | 14px/19.6px | ls normal",4],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.48px",3],
+  ["inter, \"inter Fallback\" | 700 | 14px/20px | ls normal",2],
+  ["inter, \"inter Fallback\" | 600 | 20px/28px | ls -0.6px",2],
+  ["inter, \"inter Fallback\" | 400 | 12px/16px | ls -0.36px",2],
+  ["inter, \"inter Fallback\" | 600 | 14px/24px | ls -0.42px",1],
+  ["inter, \"inter Fallback\" | 500 | 14px/20px | ls -0.42px",1],
+  ["inter, \"inter Fallback\" | 600 | 72px/80px | ls -2.16px",1],
+  ["inter, \"inter Fallback\" | 600 | 32px/40px | ls -0.96px",1],
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls -0.48px",1],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.36px",1],
+  ["inter, \"inter Fallback\" | 700 | 14px/20px | ls -0.36px",1]
+ ],
+ "radius": [["8px",7],["4px",2],["32px",2],["12px",2]],
+ "shadow": [["rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.07) 0px 3px 40px 0px",1]],
+ "transition": [
+  ["color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to 0.3s cubic-bezier(0.4, 0, 0.2, 1)",7],
+  ["left 0.3s cubic-bezier(0.4, 0, 0.2, 1)",2],
+  ["box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1)",1],
+  ["all 0.5s linear",1]
+ ],
+ "animation": [],
+ "gap": [["16px",4],["4px",2],["8px",2],["24px",1],["16px 64px",1]],
+ "fontFaces": ["UnloanRaw-Numbers 400 normal","UnloanMarkup 400 normal","UnloanRaw 400 normal","Inter-SemiBold 400 normal","inter 100 900 normal","inter 100 900 italic","inter Fallback normal normal"],
+ "buttons": [
+  {"text":"Chat with us","bg":"rgb(255, 255, 255)","color":"rgb(16, 16, 16)","radius":"4px","padding":"8px 12px","font":"700 14px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 0, 0)","radius":"0px","padding":"0px","font":"400 16px inter, \"inter Fallback\"","shadow":"none"}
+ ],
+ "headings": [
+  {"text":"Let's get started","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"600 72px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"What are you looking to do?","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"600 32px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Home Loans","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 0, 0)","radius":"0px","padding":"0px","font":"600 14px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Tools","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 0, 0)","radius":"0px","padding":"0px","font":"600 14px inter, \"inter Fallback\"","shadow":"none"}
+ ],
+ "keyframes": [],
+ "rootVars": ""
+}

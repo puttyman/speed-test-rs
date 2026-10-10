@@ -1,0 +1,68 @@
+{
+ "url": "https://www.unloan.com.au/calculators/repayments",
+ "viewport": "1440x900",
+ "color": [["rgb(0, 0, 0)",269],["rgb(16, 16, 16)",121],["rgb(53, 53, 53)",50],["rgb(103, 103, 103)",18],["rgba(0, 0, 0, 0)",7],["rgb(0, 102, 204)",6],["oklch(0.551 0.027 264.364)",3],["rgb(255, 255, 255)",2],["oklch(0.707 0.022 261.325)",1]],
+ "background": [
+  ["rgb(255, 255, 255)",18],["rgb(247, 247, 247)",8],
+  ["url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='oklch(55.1%25 0.027 264.364)' stroke-linecap='round' stroke-linejoin='round' stroke-",2],
+  ["rgb(16, 16, 16)",1],
+  ["linear-gradient(to right, rgb(16, 16, 16) 0%, rgb(16, 16, 16) 0%, rgb(204, 204, 204) 0%, rgb(204, 204, 204) 100%)",1],
+  ["rgb(23, 29, 38)",1]
+ ],
+ "border": [["1px solid rgb(226, 232, 240)",4],["1px solid rgb(204, 204, 204)",3],["1px solid rgb(0, 0, 0)",2],["2px solid rgb(204, 204, 204)",2],["2px solid rgb(0, 0, 0)",1],["1px solid rgb(222, 222, 222)",1],["2px solid rgb(255, 255, 255)",1],["1px solid rgb(209, 209, 209)",1]],
+ "font": [
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls normal",296],
+  ["inter, \"inter Fallback\" | 400 | 16px/15px | ls -0.48px",30],
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls -0.48px",28],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls normal",26],
+  ["inter, \"inter Fallback\" | 400 | 17px/25.5px | ls normal",15],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.42px",10],
+  ["inter, \"inter Fallback\" | 600 | 24px/32px | ls -0.72px",6],
+  ["inter, \"inter Fallback\" | 600 | 16px/24px | ls -0.48px",6],
+  ["inter, \"inter Fallback\" | 600 | 24px/32px | ls normal",5],
+  ["inter, \"inter Fallback\" | 600 | 16px/24px | ls normal",4],
+  ["inter, \"inter Fallback\" | 600 | 20px/28px | ls -0.6px",4],
+  ["inter, \"inter Fallback\" | 600 | 14px/19.6px | ls normal",4],
+  ["inter, \"inter Fallback\" | 700 | 14px/20px | ls normal",3],
+  ["inter, \"inter Fallback\" | 400 | 13px/17px | ls normal",3],
+  ["inter, \"inter Fallback\" | 600 | 16px/24px | ls -0.84px",3],
+  ["inter, \"inter Fallback\" | 600 | 28px/36px | ls -0.84px",3],
+  ["inter, \"inter Fallback\" | 600 | 32px/40px | ls -0.96px",3],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.48px",3],
+  ["inter, \"inter Fallback\" | 600 | 12px/16px | ls normal",2],
+  ["inter, \"inter Fallback\" | 600 | 16px/20px | ls -0.48px",2]
+ ],
+ "radius": [["8px",9],["6px",8],["12px",6],["1.67772e+07px",5],["32px",3],["4px",2],["12px 0px 0px 12px",1],["0px 12px 12px 0px",1],["5px",1],["16px",1],["11px",1],["11px 0px 0px 11px",1]],
+ "shadow": [
+  ["rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.07) 0px 3px 40px 0px",1],
+  ["rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.25) 0px 25px 50px -12px",1],
+  ["rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",1]
+ ],
+ "transition": [
+  ["color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to 0.3s cubic-bezier(0.4, 0, 0.2, 1)",7],
+  ["all 0.15s cubic-bezier(0.4, 0, 0.2, 1)",7],
+  ["transform, translate, scale, rotate 0.3s cubic-bezier(0.4, 0, 0.2, 1)",4],
+  ["color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to 0.15s cubic-bezier(0.4, 0, 0.2, 1)",3],
+  ["left 0.3s cubic-bezier(0.4, 0, 0.2, 1)",2],
+  ["box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1)",1],
+  ["all 0.5s linear",1],
+  ["all 0.1s ease-in-out",1]
+ ],
+ "animation": [],
+ "gap": [["8px",40],["16px",9],["10px",7],["0px",5],["8px normal",4],["4px",3],["24px",2],["40px",2],["64px",1],["12px",1],["32px",1],["11px",1],["5.5px",1],["16px 64px",1]],
+ "fontFaces": ["UnloanRaw-Numbers 400 normal","UnloanMarkup 400 normal","UnloanRaw 400 normal","Inter-SemiBold 400 normal","inter 100 900 normal","inter 100 900 italic","inter Fallback normal normal"],
+ "buttons": [
+  {"text":"Chat with us","bg":"rgb(255, 255, 255)","color":"rgb(16, 16, 16)","radius":"4px","padding":"8px 12px","font":"700 14px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 0, 0)","radius":"0px","padding":"0px","font":"400 16px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Key facts sheet","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 102, 204)","radius":"0px","padding":"0px","font":"400 16px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Loan summary","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 102, 204)","radius":"0px","padding":"0px","font":"400 16px inter, \"inter Fallback\"","shadow":"none"}
+ ],
+ "headings": [
+  {"text":"Repayment calculator","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"500 80px UnloanRaw, Arial, sans-serif","shadow":"none"},
+  {"text":"Estimated loan breakdown","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"600 20px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Not ready to apply yet?","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"600 72px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"Unloan features","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"600 32px inter, \"inter Fallback\"","shadow":"none"}
+ ],
+ "keyframes": [],
+ "rootVars": ""
+}

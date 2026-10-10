@@ -1,0 +1,53 @@
+{
+ "url": "https://www.unloan.com.au/home-loan",
+ "viewport": "390x844",
+ "color": [["rgb(0, 0, 0)",129],["rgb(16, 16, 16)",96],["rgb(103, 103, 103)",48],["rgb(53, 53, 53)",42],["rgba(0, 0, 0, 0)",4],["rgb(0, 102, 204)",4],["rgb(255, 255, 255)",2]],
+ "background": [["rgb(255, 255, 255)",7],["rgb(247, 247, 247)",3],["rgb(16, 16, 16)",2],["url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='oklch(55.1%25 0.027 264.364)' stroke-linecap='round' stroke-linejoin='round' stroke-",1]],
+ "border": [["1px solid rgb(222, 222, 222)",14],["1px solid rgb(0, 0, 0)",2],["1px solid rgb(226, 232, 240)",1]],
+ "font": [
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls normal",115],
+  ["inter, \"inter Fallback\" | 400 | 16px/24px | ls -0.4px",51],
+  ["inter, \"inter Fallback\" | 400 | 16px/15px | ls -0.48px",30],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls normal",24],
+  ["UnloanRaw, Arial, sans-serif | 500 | 48px/56px | ls normal",17],
+  ["inter, \"inter Fallback\" | 400 | 17px/25.5px | ls normal",15],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 24px/32px | ls -0.6px",13],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 96px/108px | ls -2.88px",8],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.42px",6],
+  ["UnloanRaw, Arial, sans-serif | 400 | 44px/52px | ls -1.92px",4],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 32px/40px | ls -0.8px",4],
+  ["UnloanRaw-Numbers, Inter-Bold, Inter, sans-serif | 400 | 44px/44px | ls -1.1px",4],
+  ["UnloanRaw-Numbers, Inter-Bold, Inter, sans-serif | 700 | 24px/22.8px | ls -0.6px",4],
+  ["UnloanRaw-Numbers, Inter-Bold, Inter, sans-serif | 700 | 12px/12px | ls -0.3px",4],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 14px/20px | ls -0.35px",4],
+  ["inter, \"inter Fallback\" | 600 | 14px/19.6px | ls normal",4],
+  ["inter, \"inter Fallback\" | 400 | 14px/20px | ls -0.48px",3],
+  ["inter, \"inter Fallback\" | 700 | 14px/20px | ls normal",2],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 20px/28px | ls -0.5px",2],
+  ["Inter-SemiBold, Inter, sans-serif | 400 | 10.5px/0px | ls -0.35px",2]
+ ],
+ "radius": [["8px",7],["4px",2],["32px",2],["6px",2],["1.67772e+07px",1]],
+ "shadow": [["rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.07) 0px 3px 40px 0px",1]],
+ "transition": [
+  ["color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to 0.3s cubic-bezier(0.4, 0, 0.2, 1)",7],
+  ["left 0.3s cubic-bezier(0.4, 0, 0.2, 1)",2],
+  ["box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1)",1],
+  ["all 0.5s linear",1],
+  ["color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to 0.15s cubic-bezier(0.4, 0, 0.2, 1)",1]
+ ],
+ "animation": [],
+ "gap": [["16px",18],["24px",8],["4px",6],["8px",3],["7px",2],["normal 24px",2],["32px",1],["8px normal",1],["40px",1]],
+ "fontFaces": ["UnloanRaw-Numbers 400 normal","UnloanMarkup 400 normal","UnloanRaw 400 normal","Inter-SemiBold 400 normal","inter 100 900 normal","inter 100 900 italic","inter Fallback normal normal"],
+ "buttons": [
+  {"text":"Chat with us","bg":"rgb(255, 255, 255)","color":"rgb(16, 16, 16)","radius":"4px","padding":"8px 12px","font":"700 14px inter, \"inter Fallback\"","shadow":"none"},
+  {"text":"","bg":"rgba(0, 0, 0, 0)","color":"rgb(0, 0, 0)","radius":"0px","padding":"0px","font":"400 16px inter, \"inter Fallback\"","shadow":"none"}
+ ],
+ "headings": [
+  {"text":"Unloan Features","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"400 44px UnloanRaw, Arial, sans-serif","shadow":"none"},
+  {"text":"Variable rates for new loans","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"400 32px Inter-SemiBold, Inter, sans-serif","shadow":"none"},
+  {"text":"Loan details","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"400 32px Inter-SemiBold, Inter, sans-serif","shadow":"none"},
+  {"text":"Features","bg":"rgba(0, 0, 0, 0)","color":"rgb(16, 16, 16)","radius":"0px","padding":"0px","font":"400 32px Inter-SemiBold, Inter, sans-serif","shadow":"none"}
+ ],
+ "keyframes": [],
+ "rootVars": ""
+}
