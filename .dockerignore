@@ -1,6 +1,9 @@
-target
+**/target
 end2end/node_modules
 end2end/playwright-report
 end2end/test-results
 .git
+.github
+.claude
 docs
+# Note: dist/ must stay in the context; Dockerfile.release copies dist/<arch>/speed-test-rs.
