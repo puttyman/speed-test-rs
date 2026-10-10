@@ -22,8 +22,30 @@ uuid = { version = "1.28", features = ["serde"] }
 
 # Server-only dependencies
 axum = { version = "0.8", features = ["ws"], optional = true }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }
+clap = { version = "4.6", features = ["derive"], optional = true }
+directories = { version = "6", optional = true }
+gethostname = { version = "1.1", optional = true }
+if-addrs = { version = "0.15", optional = true }
 leptos_axum = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
+mime_guess = { version = "2", optional = true }
+open = { version = "5.4", optional = true }
+qrcode = { version = "0.14", default-features = false, optional = true }
+rust-embed = { version = "8.13", features = ["interpolate-folder-path"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+socket2 = { version = "0.6", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "sync", "time"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[build-dependencies]
+# Only used when `embed-assets` is on: pre-compress the site before embedding it.
+brotli = { version = "9", optional = true }
+flate2 = { version = "1.1", optional = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
 
 [features]
 hydrate = [
@@ -36,14 +58,31 @@ hydrate = [
 ]
 ssr = [
     "dep:axum",
-    "dep:tokio",
+    "dep:axum-server",
+    "dep:clap",
+    "dep:directories",
+    "dep:gethostname",
+    "dep:if-addrs",
     "dep:leptos_axum",
+    "dep:mime_guess",
+    "dep:open",
+    "dep:qrcode",
+    "dep:rustls",
+    "dep:socket2",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:tracing-subscriber",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
     "uuid/v4",
     "uuid/v7",
 ]
+# Compile the cargo-leptos site output (target/site) into the server binary so it runs
+# without any files next to it (docs/SPEC.md §10.1). Build the site first:
+#   cargo leptos build --release
+#   cargo build --release --no-default-features --features ssr,embed-assets
+embed-assets = ["ssr", "dep:rust-embed", "dep:brotli", "dep:flate2"]
 
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]

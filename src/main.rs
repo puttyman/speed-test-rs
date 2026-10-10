@@ -1,66 +1,105 @@
 #[cfg(feature = "ssr")]
-#[tokio::main]
-async fn main() {
-    use axum::Router;
-    use leptos::logging::log;
-    use leptos::prelude::*;
-    use leptos_axum::{LeptosRoutes, generate_route_list};
-    use speed_test_rs::app::*;
-    use speed_test_rs::server;
+fn main() -> std::process::ExitCode {
+    use clap::Parser;
+    use speed_test_rs::server::config::{Cli, Command, Config, healthcheck_listen};
+    use speed_test_rs::server::healthcheck;
+    use std::process::ExitCode;
 
-    // `speed-test-rs healthcheck` is used by the Docker HEALTHCHECK so the runtime
-    // image does not need curl.
-    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
-        std::process::exit(server::healthcheck::run());
+    match Cli::parse().into_command() {
+        // `speed-test-rs healthcheck` is used by the Docker HEALTHCHECK so the runtime
+        // image does not need curl.
+        Command::Healthcheck(args) => match healthcheck_listen(&args) {
+            Ok(listen) => ExitCode::from(healthcheck::run(&listen) as u8),
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Command::Serve(args) => {
+            let config = match Config::from_args(args) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to start the Tokio runtime");
+            match runtime.block_on(serve(config)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
     }
-
-    // `get_configuration(None)` reads the [package.metadata.leptos] values baked in at
-    // build time, overridden by LEPTOS_* environment variables at runtime
-    // (e.g. LEPTOS_SITE_ADDR=0.0.0.0:8080 in the Docker image).
-    let conf = get_configuration(None).unwrap();
-    let leptos_options = conf.leptos_options;
-    let addr = leptos_options.site_addr;
-    let routes = generate_route_list(App);
-
-    let app = Router::new()
-        .merge(server::api::routes())
-        .leptos_routes(&leptos_options, routes, {
-            let leptos_options = leptos_options.clone();
-            move || shell(leptos_options.clone())
-        })
-        .fallback(leptos_axum::file_and_error_handler(shell))
-        .with_state(leptos_options);
-
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    log!("listening on http://{}", &addr);
-    axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
 }
 
-/// Resolves on Ctrl+C or SIGTERM so `docker stop` shuts the server down cleanly.
 #[cfg(feature = "ssr")]
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.ok();
-    };
+async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
+    use speed_test_rs::server::{AppState, assets, listen, router, startup};
 
-    #[cfg(unix)]
-    let terminate = async {
-        if let Ok(mut sig) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            sig.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    startup::init_logging(&config);
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    if config.history
+        && let Err(e) = std::fs::create_dir_all(&config.data_dir)
+    {
+        tracing::warn!(
+            "cannot create the data directory {}: {e}",
+            config.data_dir.display()
+        );
     }
+
+    let http = listen::bind_all(&config.listen).map_err(|e| e.to_string())?;
+    let tls = match &config.tls {
+        Some(tls) => {
+            let rustls = listen::load_tls(&tls.cert, &tls.key)?;
+            let listeners = listen::bind_all(&tls.listen).map_err(|e| e.to_string())?;
+            Some((listeners, rustls))
+        }
+        None => None,
+    };
+
+    let state = AppState::new(config);
+    if assets::embedded_wasm_present(&state.leptos.output_name) == Some(false) {
+        tracing::warn!(
+            "the embedded site has no pkg/{}.wasm; the page will not hydrate",
+            state.leptos.output_name
+        );
+    }
+
+    let local_addrs = |listeners: &[std::net::TcpListener]| {
+        listeners
+            .iter()
+            .filter_map(|l| l.local_addr().ok())
+            .collect::<Vec<_>>()
+    };
+    let bound = startup::Bound {
+        config: &state.config,
+        http: local_addrs(&http),
+        https: tls
+            .as_ref()
+            .map(|(listeners, _)| local_addrs(listeners))
+            .unwrap_or_default(),
+        assets: state.assets.describe(),
+    };
+    bound.print_banner();
+    // The sockets are already listening, so the browser can connect right away.
+    if state.config.open
+        && let Some(url) = bound.local_url()
+    {
+        startup::open_browser(&url);
+    }
+    tracing::info!("ready");
+
+    let app = router(state);
+    listen::serve(app, http, tls, listen::shutdown_signal())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(not(feature = "ssr"))]
