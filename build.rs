@@ -8,6 +8,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=migrations");
     #[cfg(feature = "embed-assets")]
     embed::run();
 }

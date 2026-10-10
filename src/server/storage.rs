@@ -12,21 +12,20 @@
 //!   `(created_at DESC, id DESC)`.
 //!
 //! The response types ([`RunSummary`], [`RunPage`], [`LabelSummary`], [`CompareResult`], ...)
-//! only depend on serde and `crate::model`, so the UI can share them once they move to the
-//! model.
+//! live in `crate::model::history` so the UI can deserialize them.
 
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
 use futures_util::{Stream, TryStreamExt, stream};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool};
 use uuid::Uuid;
 
 use super::config::Config;
-use crate::model::result::{ClientInfo, GroupResult, RunResult, Summary, Transport};
+use crate::model::result::{ClientInfo, GroupResult, RunResult, Summary};
 use crate::model::scores::Classification;
 use crate::model::stats;
 
@@ -97,52 +96,13 @@ impl From<serde_json::Error> for StorageError {
 pub type Result<T, E = StorageError> = std::result::Result<T, E>;
 
 // ---------------------------------------------------------------------------------------------
-// Public types (API shapes)
+// Public types (API shapes live in `crate::model::history`, shared with the UI)
 // ---------------------------------------------------------------------------------------------
 
-/// The AIM classes of a run, as stored in the `score_*` columns.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScoreClasses {
-    pub streaming: Option<Classification>,
-    pub gaming: Option<Classification>,
-    pub rtc: Option<Classification>,
-}
-
-/// A run without its raw points and phases: one row of the history list.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RunSummary {
-    pub id: Uuid,
-    pub created_at: String,
-    pub label: Option<String>,
-    pub notes: Option<String>,
-    pub transport: Transport,
-    pub profile: String,
-    pub streams: u8,
-    pub client: ClientInfo,
-    pub tls: bool,
-    pub group_id: Option<Uuid>,
-    /// Other sessions active during the run (SPEC §5.11).
-    pub peers_max: u32,
-    pub overlap_ratio: f64,
-    pub summary: Summary,
-    pub scores: ScoreClasses,
-    pub duration_ms: u64,
-}
-
-impl RunSummary {
-    /// True if another session overlapped this run.
-    pub fn overlapped(&self) -> bool {
-        self.peers_max > 0 && self.overlap_ratio > 0.0
-    }
-}
-
-/// One page of runs, newest first. Pass `next_cursor` back as `cursor` for the next page;
-/// `None` means this was the last page.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RunPage {
-    pub runs: Vec<RunSummary>,
-    pub next_cursor: Option<String>,
-}
+pub use crate::model::history::{
+    CompareItem, CompareKind, CompareResult, Delta, GroupRecord, LabelSummary, RunPage, RunSummary,
+    ScoreClasses, SummaryDeltas,
+};
 
 /// Filters of [`Storage::list_runs`] and the export.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -159,98 +119,11 @@ pub struct RunFilter {
     pub exclude_overlapped: bool,
 }
 
-/// A label with its run count, last use and the medians of its last [`LABEL_WINDOW`] runs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LabelSummary {
-    pub label: String,
-    pub runs: u32,
-    pub last_used: String,
-    pub median_download_bps: Option<f64>,
-    pub median_upload_bps: Option<f64>,
-    pub median_latency_ms: Option<f64>,
-}
-
 /// What to compare: 2–4 labels or run IDs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareTarget {
     Labels(Vec<String>),
     Ids(Vec<Uuid>),
-}
-
-/// Whether an item is a label (median of its last runs) or a single run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CompareKind {
-    Label,
-    Run,
-}
-
-/// A metric's difference against the first compared item.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Delta {
-    /// `value - reference`, in the metric's unit.
-    pub abs: f64,
-    /// `(value - reference) / reference`; `None` when the reference is 0.
-    pub ratio: Option<f64>,
-    /// Whether this is better than the reference (higher throughput, lower latency, jitter
-    /// and loss); `None` when equal.
-    pub better: Option<bool>,
-}
-
-/// Per-metric deltas, with the field names of [`Summary`]. A field is `None` when either side
-/// lacks the metric.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct SummaryDeltas {
-    pub download_bps: Option<Delta>,
-    pub upload_bps: Option<Delta>,
-    pub latency_ms: Option<Delta>,
-    pub jitter_ms: Option<Delta>,
-    pub down_loaded_latency_ms: Option<Delta>,
-    pub down_loaded_jitter_ms: Option<Delta>,
-    pub up_loaded_latency_ms: Option<Delta>,
-    pub up_loaded_jitter_ms: Option<Delta>,
-    pub packet_loss_ratio: Option<Delta>,
-}
-
-/// One compared item.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CompareItem {
-    pub kind: CompareKind,
-    /// The label, or the run ID.
-    pub key: String,
-    /// The label (for a run: its label, if any).
-    pub label: Option<String>,
-    /// Runs the summary is computed from (≤ [`LABEL_WINDOW`] for a label, 1 for a run).
-    pub runs: u32,
-    /// Those runs, newest first. Fetch `/api/runs/{id}` for their points.
-    pub run_ids: Vec<Uuid>,
-    /// The run's summary, or the per-metric medians of the label's runs.
-    pub summary: Summary,
-    /// Differences against the first item; `None` on the first item itself.
-    pub deltas: Option<SummaryDeltas>,
-}
-
-/// The compare view's data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CompareResult {
-    pub items: Vec<CompareItem>,
-}
-
-/// A stored group test with the runs that belong to it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroupRecord {
-    pub id: Uuid,
-    pub created_at: String,
-    pub label: Option<String>,
-    pub device_count: u32,
-    pub aggregate_download_bps: Option<f64>,
-    pub aggregate_upload_bps: Option<f64>,
-    pub fairness_download: Option<f64>,
-    pub fairness_upload: Option<f64>,
-    /// The server-computed group result; `None` while only members' runs have been posted.
-    pub detail: Option<GroupResult>,
-    /// Member runs posted with this `group_id`, newest first.
-    pub runs: Vec<RunSummary>,
 }
 
 /// Export file format.
@@ -1265,6 +1138,7 @@ pub(crate) mod test_support {
     use super::*;
     use crate::model::profile::PhaseStatus;
     use crate::model::protocol::Phase;
+    use crate::model::result::Transport;
     use crate::model::result::{
         BandwidthPoint, Concurrency, PacketLossCounts, PhaseRecord, Points,
     };

@@ -219,7 +219,7 @@ async fn info(State(state): State<AppState>, req: Request) -> Json<Info> {
         udp_port: config.udp_port,
         tls: config.tls.is_some(),
         presence: config.presence,
-        history: config.history,
+        history: state.storage.is_some(),
     })
 }
 
