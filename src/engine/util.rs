@@ -112,6 +112,27 @@ pub fn http_upload_duration_ms(request_to_response_ms: f64, server_ms: Option<f6
     }
 }
 
+/// Timed steps grow the request size while requests are shorter than this.
+pub const TIMED_GROW_BELOW_MS: f64 = 250.0;
+
+/// Smallest request size of a timed transfer.
+pub const TIMED_MIN_BYTES: u64 = 64 * 1024;
+
+/// Size of the next request of a timed transfer: double while requests take
+/// less than [`TIMED_GROW_BELOW_MS`], but never more than the last request's
+/// rate can move in the time left (with a [`TIMED_MIN_BYTES`] floor).
+pub fn next_timed_size(size: u64, duration_ms: f64, left_ms: f64, cap: u64) -> u64 {
+    let mut next = size;
+    if duration_ms < TIMED_GROW_BELOW_MS {
+        next = next.saturating_mul(2);
+    }
+    if duration_ms > 0.0 && left_ms > 0.0 {
+        let fits = (size as f64 / duration_ms * left_ms) as u64;
+        next = next.min(fits);
+    }
+    next.clamp(TIMED_MIN_BYTES.min(cap), cap.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +201,33 @@ mod tests {
         assert_eq!(http_upload_duration_ms(100.0, Some(90.0)), 90.0);
         assert_eq!(http_upload_duration_ms(100.0, Some(0.0)), 100.0);
         assert_eq!(http_upload_duration_ms(100.0, None), 100.0);
+    }
+
+    #[test]
+    fn timed_request_sizes_fit_the_time_left() {
+        // Short requests double...
+        assert_eq!(
+            next_timed_size(1_000_000, 50.0, 10_000.0, u64::MAX),
+            2_000_000
+        );
+        // ...but never past what fits in the time left (1 MB per 100 ms, 300 ms left).
+        assert_eq!(
+            next_timed_size(1_000_000, 100.0, 300.0, u64::MAX),
+            2_000_000
+        );
+        assert_eq!(
+            next_timed_size(4_000_000, 400.0, 300.0, u64::MAX),
+            3_000_000
+        );
+        // Floor and cap.
+        assert_eq!(
+            next_timed_size(1_000_000, 1000.0, 1.0, u64::MAX),
+            TIMED_MIN_BYTES
+        );
+        assert_eq!(
+            next_timed_size(1_000_000, 10.0, 10_000.0, 1_500_000),
+            1_500_000
+        );
+        assert_eq!(next_timed_size(10, 10.0, 10_000.0, 10), 10);
     }
 }

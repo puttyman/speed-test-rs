@@ -201,14 +201,51 @@ pub fn validate_run(run: &RunResult) -> Result<(), String> {
     Ok(())
 }
 
-/// `POST /api/runs`: stores a run (body: `RunResult`). The client IP and User-Agent come from
-/// the connection and the request headers, never from the body.
+/// Query of `POST /api/runs`.
+#[derive(Debug, Default, Deserialize)]
+pub struct PostRunQuery {
+    /// The session ID the run's sockets used (`Hello.session`).
+    pub session: Option<String>,
+}
+
+/// Fills in what the server knows about the run's session (SPEC §5.11 "overlap flagging"):
+/// the overlap with other sessions, which overrides any client-sent value, and the group
+/// test the run belonged to. An unknown session leaves the run as sent.
+///
+/// A page keeps one session across runs, so the overlap window is the session's activity
+/// within the run's duration (plus a little slack) before now, not its whole history.
+fn apply_session_facts(state: &AppState, session: Uuid, run: &mut RunResult) {
+    let registry = &state.measure.sessions;
+    let lookback = std::time::Duration::from_millis(run.duration_ms.saturating_add(5_000));
+    let since = tokio::time::Instant::now()
+        .checked_sub(lookback)
+        .unwrap_or_else(tokio::time::Instant::now);
+    let concurrency = match registry.recent_activity_window(session, since) {
+        Some(window) => registry.concurrency_for(session, Some(window)),
+        None => registry.concurrency_for(session, None),
+    };
+    if let Some(c) = concurrency {
+        run.concurrency = c;
+    }
+    if let Some(group) = state.groups.report_run(session, run) {
+        run.group_id = Some(group);
+    }
+}
+
+/// `POST /api/runs[?session=<uuid>]`: stores a run (body: `RunResult`). The client IP and
+/// User-Agent come from the connection and the request headers, never from the body. With
+/// `session`, the overlap and group are filled in from the server's session registry.
 async fn post_run(
     State(state): State<AppState>,
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    query: Result<Query<PostRunQuery>, QueryRejection>,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> ApiResult<Response> {
+    let Query(query) = query?;
+    let session = non_empty(&query.session)
+        .map(|s| parse_id(&s, "session"))
+        .transpose()?;
     let body = body.map_err(|e| {
         let status = e.status();
         if status == StatusCode::PAYLOAD_TOO_LARGE {
@@ -223,6 +260,9 @@ async fn post_run(
     let mut run: RunResult = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid run: {e}")))?;
     validate_run(&run).map_err(ApiError::bad_request)?;
+    if let Some(session) = session {
+        apply_session_facts(&state, session, &mut run);
+    }
 
     let Some(storage) = state.storage.as_ref() else {
         if run.id.is_nil() {

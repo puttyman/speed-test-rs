@@ -14,8 +14,19 @@
 //!
 //! Module layout: [`socket`] (WebSocket wrapper), [`ws_transport`] and
 //! [`http_transport`] (latency/download/upload), [`loaded_latency`],
-//! [`runner`] (profile execution), [`rtc`] (WebRTC packet loss probe).
+//! [`runner`] (profile execution), [`rtc`] (WebRTC packet loss probe),
+//! [`presence`] (the page-wide presence and group client, SPEC §5.11).
 //! [`util`] holds the platform-free helpers.
+//!
+//! **Sessions.** A run opens its own control socket (status updates, WebRTC
+//! signalling), a probe socket and its data sockets, all under
+//! `EngineOptions::session`. A page that keeps a presence connection should
+//! run with the presence session ID ([`presence::PresenceHandle::engine_options`]
+//! does this): the server then counts the run's bytes for that device (live
+//! speed in the Devices panel, group results, overlap flagging), and the
+//! session simply has two control sockets while a test runs. The run's
+//! control socket is kept, rather than borrowing the presence socket, because
+//! packet loss signalling needs exclusive reads on it.
 
 pub mod util;
 
@@ -25,6 +36,8 @@ pub mod http_transport;
 pub mod js;
 #[cfg(feature = "hydrate")]
 pub mod loaded_latency;
+#[cfg(feature = "hydrate")]
+pub mod presence;
 #[cfg(feature = "hydrate")]
 pub mod rtc;
 #[cfg(feature = "hydrate")]
@@ -66,8 +79,11 @@ mod api {
         /// Shared secret sent in `Hello` (and as a bearer token in HTTP mode).
         pub auth: Option<String>,
         pub device: DeviceInfo,
-        /// Groups this run's sockets on the server.
+        /// Groups this run's sockets on the server. Use the presence session
+        /// ID when the page has one (see the module docs).
         pub session: Uuid,
+        /// Label sent with the run's presence `Status` updates.
+        pub label: Option<String>,
         /// WebRTC packet loss; `None` marks packet loss steps skipped.
         pub packet_loss: Option<Rc<dyn PacketLossProbe>>,
     }
@@ -83,6 +99,7 @@ mod api {
                 auth: None,
                 device,
                 session: Uuid::new_v4(),
+                label: None,
                 packet_loss: None,
             }
         }
@@ -191,11 +208,32 @@ mod api {
 
     /// Starts a run in the background (`spawn_local`).
     pub fn start(opts: EngineOptions, on_event: impl Fn(EngineEvent) + 'static) -> EngineHandle {
+        spawn_run(opts, Rc::new(on_event), None)
+    }
+
+    /// Starts a run whose first step begins in `starts_in_ms` (a group test's
+    /// `GroupStart`, SPEC §5.11). The sockets open right away and `Connected`
+    /// is emitted during the countdown; timed steps then follow the schedule
+    /// from the shared start instant. Abort works during the countdown too.
+    pub fn start_at(
+        opts: EngineOptions,
+        starts_in_ms: u32,
+        on_event: impl Fn(EngineEvent) + 'static,
+    ) -> EngineHandle {
+        let at = super::js::now() + f64::from(starts_in_ms);
+        spawn_run(opts, Rc::new(on_event), Some(at))
+    }
+
+    fn spawn_run(
+        opts: EngineOptions,
+        on_event: Rc<dyn Fn(EngineEvent)>,
+        start_at: Option<f64>,
+    ) -> EngineHandle {
         let abort = AbortFlag::new();
         let handle = EngineHandle {
             abort: abort.clone(),
         };
-        wasm_bindgen_futures::spawn_local(super::runner::run(opts, Rc::new(on_event), abort));
+        wasm_bindgen_futures::spawn_local(super::runner::run(opts, on_event, abort, start_at));
         handle
     }
 

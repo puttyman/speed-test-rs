@@ -12,9 +12,14 @@
 //!   server_ms}`. `Abort` (on this socket or the session's control socket) stops the
 //!   current transfer, which then ends with `Error{code: Conflict, message: "aborted"}`
 //!   instead of the `*Done` message.
-//! - **control**: `Status`, `SetHidden`, `Abort`, and WebRTC signalling through the
-//!   [`RtcSignaling`] hook. Every control socket has an outbound queue registered in the
-//!   [`SessionRegistry`], so the server can push messages to it at any time.
+//! - **control**: `Status`, `SetHidden`, `Abort`, group messages (handled by
+//!   [`Groups`](super::groups::Groups)) and WebRTC signalling through the [`RtcSignaling`]
+//!   hook. Every control socket has an outbound queue registered in the
+//!   [`SessionRegistry`], so the server can push messages to it at any time: right after
+//!   `Welcome` it gets one presence snapshot (`Peers`), then the presence broadcaster's
+//!   snapshots (SPEC §5.11). When a control socket that reported a test phase closes, the
+//!   session's phase is reset to idle; when a session's last control socket closes, it
+//!   leaves its group.
 //!
 //! Idle timeout: a socket that receives no frame for [`IDLE_TIMEOUT`] gets
 //! `Error{code: Timeout}` and is closed. The server sends a WebSocket Ping on control
@@ -25,15 +30,17 @@
 //! `permessage-deflate` is never negotiated (Axum doesn't implement it), so random payload
 //! bytes go over the wire as-is.
 
+use std::net::{IpAddr, SocketAddr};
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, State};
 use axum::response::Response;
 use axum::routing::get;
+use axum::{Extension, Router};
 use bytes::Bytes;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{Sink, SinkExt, StreamExt};
@@ -43,12 +50,14 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::config::Config;
+use super::groups::StartContext;
 use super::http_measure::token_matches;
+use super::presence;
 use super::rtc_hook::RtcSignaling;
 use super::sessions::{CONTROL_QUEUE, Session, SessionRegistry, SocketGuard, TransferGuard};
 use super::state::AppState;
 use crate::model::protocol::{
-    ClientMsg, DeviceInfo, ErrorCode, Limits, PROTOCOL_VERSION, Role, ServerMsg,
+    ClientMsg, DeviceInfo, ErrorCode, Limits, PROTOCOL_VERSION, Phase, Role, ServerMsg,
 };
 
 /// Size of the shared random payload buffer.
@@ -177,8 +186,13 @@ fn configure(ws: WebSocketUpgrade) -> WebSocketUpgrade {
         .max_write_buffer_size(4 * MAX_BINARY_SIZE)
 }
 
-async fn control_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    configure(ws).on_upgrade(move |socket| control_socket(socket, state))
+async fn control_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+) -> Response {
+    let peer_ip = connect_info.map(|Extension(ConnectInfo(addr))| addr.ip().to_canonical());
+    configure(ws).on_upgrade(move |socket| control_socket(socket, state, peer_ip))
 }
 
 async fn data_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -646,7 +660,7 @@ async fn run_download(
 // ---------------------------------------------------------------------------------------
 // Control socket
 
-async fn control_socket(mut socket: WebSocket, state: AppState) {
+async fn control_socket(mut socket: WebSocket, state: AppState, peer_ip: Option<IpAddr>) {
     let Some(hello) = handshake(&mut socket, &state.config, Role::Control).await else {
         return;
     };
@@ -663,12 +677,20 @@ async fn control_socket(mut socket: WebSocket, state: AppState) {
     if send_msg(&mut socket, &welcome(&state)).await.is_err() {
         return;
     }
+    if state.config.presence {
+        let peers = presence::snapshot_for(&state.measure.sessions, hello.session);
+        if send_msg(&mut socket, &peers).await.is_err() {
+            return;
+        }
+    }
     let (sink, mut stream) = socket.split();
     let writer = tokio::spawn(control_writer(sink, rx));
     let ctx = ControlCtx {
         state: &state,
         session: guard.session().clone(),
         tx: tx.clone(),
+        peer_ip,
+        reported_phase: AtomicBool::new(false),
     };
 
     let close: Option<(ErrorCode, &str, u16)> = loop {
@@ -696,9 +718,19 @@ async fn control_socket(mut socket: WebSocket, state: AppState) {
     };
 
     // Detach (drops the registry's sender), then let the writer drain and hand the sink back.
+    let session = ctx.session.clone();
+    let reported_phase = ctx.reported_phase.load(Ordering::Relaxed);
     drop(ctx);
     drop(guard);
     drop(tx);
+    if session.control_sockets() == 0 {
+        state.groups.disconnected(session.id());
+    }
+    if reported_phase {
+        // E.g. a run's own control socket closed by an abort while the page's presence
+        // socket stays: don't leave the device "testing" forever.
+        state.measure.sessions.clear_phase(session.id());
+    }
     let Ok(mut sink) = writer.await else { return };
     if let Some((code, message, close_code)) = close {
         reject(&mut sink, code, message, close_code).await;
@@ -740,6 +772,10 @@ struct ControlCtx<'a> {
     state: &'a AppState,
     session: Arc<Session>,
     tx: mpsc::Sender<ServerMsg>,
+    /// The client's address (for the server link speed of group tests).
+    peer_ip: Option<IpAddr>,
+    /// The last `Status` this socket sent had a test phase.
+    reported_phase: AtomicBool,
 }
 
 impl ControlCtx<'_> {
@@ -752,7 +788,11 @@ impl ControlCtx<'_> {
         let sessions = &self.state.measure.sessions;
         let id = self.session.id();
         match msg {
-            ClientMsg::Status { phase, label } => sessions.set_status(id, phase, label),
+            ClientMsg::Status { phase, label } => {
+                self.reported_phase
+                    .store(phase.is_some_and(|p| p != Phase::Idle), Ordering::Relaxed);
+                sessions.set_status(id, phase, label);
+            }
             ClientMsg::SetHidden { hidden } => sessions.set_hidden(id, hidden),
             ClientMsg::Abort => {
                 tracing::debug!(session = %id, "abort requested on the control socket");
@@ -764,12 +804,29 @@ impl ControlCtx<'_> {
                 sdp_mid,
                 sdp_m_line_index,
             } => self.rtc_ice(candidate, sdp_mid, sdp_m_line_index).await,
-            ClientMsg::GroupCreate
-            | ClientMsg::GroupJoin { .. }
-            | ClientMsg::GroupLeave
-            | ClientMsg::GroupStart => {
-                self.reply(ServerMsg::error(ErrorCode::NotFound, "not implemented yet"))
-                    .await;
+            ClientMsg::GroupCreate => {
+                if let Err(e) = self.state.groups.create(id) {
+                    self.reply(e.to_msg()).await;
+                }
+            }
+            ClientMsg::GroupJoin { group } => {
+                if let Err(e) = self.state.groups.join(id, group) {
+                    self.reply(e.to_msg()).await;
+                }
+            }
+            ClientMsg::GroupLeave => {
+                if let Err(e) = self.state.groups.leave(id) {
+                    self.reply(e.to_msg()).await;
+                }
+            }
+            ClientMsg::GroupStart => {
+                let ctx = StartContext {
+                    storage: self.state.storage.clone(),
+                    client_ip: self.peer_ip,
+                };
+                if let Err(e) = self.state.groups.start(id, ctx) {
+                    self.reply(e.to_msg()).await;
+                }
             }
             ClientMsg::Hello { .. } => {
                 self.reply(ServerMsg::error(

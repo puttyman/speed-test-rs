@@ -4,9 +4,11 @@
 pub mod api;
 pub mod assets;
 pub mod config;
+pub mod groups;
 pub mod healthcheck;
 pub mod http_measure;
 pub mod listen;
+pub mod presence;
 pub mod router;
 pub mod rtc;
 pub mod rtc_hook;
