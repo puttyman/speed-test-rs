@@ -103,6 +103,7 @@ UDP **WebRTC data channel** served by the app itself, so no external TURN server
 | UI kit | **None (hand-written SCSS)**. The Thaw dependency is removed. | Matching Cloudflare's look needs custom styling anyway, and fewer dependencies mean a smaller WASM bundle. |
 | Charts | **Inline SVG Leptos components** | No JS charting library. Works with SSR. Easy to theme for dark mode. |
 | Measurement engine location | **Client-side Rust compiled to WASM** (`web-sys`, `js-sys`) | The browser is the measurement endpoint. Rust lets the client and server share protocol types. |
+| Throughput transport | **WebSocket** (HTTP as a cross-check). WebRTC is **not** used for download/upload. | Browser data-channel (SCTP) throughput depends on the browser's implementation and CPU more than on the link, and would under-read fast LANs. WebRTC is used only for packet loss (§5.7). *Decided 2026-10-10.* |
 | WebRTC | **`str0m`** (sans-IO WebRTC). Alternative: `webrtc` (webrtc-rs). | Only data channels are needed. str0m is small, actively maintained, and runs on one UDP socket, which keeps Docker port mapping simple. |
 | Storage | **SQLite via `sqlx`** (compile-time-checked queries, embedded migrations), with the `sqlite` bundled build | Zero-ops, a single file in a Docker volume or the user's data directory. Bundled SQLite means no system library is needed, so the binary stays self-contained. |
 | Static assets | **Embedded in the server binary** with `rust-embed` behind an `embed-assets` feature (on for release builds). Dev builds read `target/site` from disk. | Single-file distribution (§10.1). Dev keeps `cargo leptos watch` hot reload. |
@@ -709,6 +710,9 @@ Dockerfile, docker-compose.yml
 - Wi-Fi metadata hints (SSID, band) where the browser or OS exposes them, or entered manually.
 - An optional public "internet mode" that points the engine at another speed-test-rs instance.
 - Peer-to-peer testing between two browsers through the server as a signalling relay.
+- A "real-time load" phase: an unreliable WebRTC data channel sends at fixed target rates
+  (e.g. 5 / 25 / 100 Mbps) and records loss and jitter at each rate, like `iperf3 -u`. It is
+  a diagnostic for video calls and gaming, not a throughput measurement.
 
 ## 16. Open questions
 
@@ -726,12 +730,3 @@ Dockerfile, docker-compose.yml
 6. **Release tooling**: `cargo-dist` (generated workflow, installers, less to maintain) or a
    hand-written GitHub Actions matrix (full control over the two-step leptos build)?
    Confirm during M7 that cargo-dist can run the `cargo leptos build` pre-step.
-7. **WebRTC as a throughput transport**: should a third, experimental transport measure
-   download and upload over the WebRTC data channel (UDP/SCTP), alongside WebSocket and HTTP?
-   *Current proposal*: no for the headline numbers. Browser SCTP stacks are CPU-bound and
-   implement their own congestion control, so the result reflects the browser's data channel
-   implementation more than the link, and it is expected to fall short of WebSocket on fast
-   LANs. Instead, consider a later **"real-time load" phase**: an unreliable data channel
-   sends at fixed target rates (e.g. 5 / 25 / 100 Mbps) and records loss and jitter at each
-   rate, similar to `iperf3 -u`. That answers "can this AP carry a video call or game
-   stream?", which TCP-based tests can't.
