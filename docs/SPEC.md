@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Draft v0.1 |
 | **Last updated** | 2026-10-10 (v0.3: Unloan-inspired design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
-| **Stack** | Rust · Leptos 0.8 (SSR + hydration/WASM) · Axum 0.8 · Tokio · WebSocket · WebRTC (str0m) · SQLite |
+| **Stack** | Rust 2024 edition (stable, MSRV 1.89) · Leptos 0.8 (SSR + hydration/WASM) · Axum 0.8 · Tokio · WebSocket · WebRTC (str0m) · SQLite |
 | **License** | MIT OR Apache-2.0 |
 
 ---
@@ -112,6 +112,7 @@ UDP **WebRTC data channel** served by the app itself, so no external TURN server
 | Static assets | **Embedded in the server binary** with `rust-embed` behind an `embed-assets` feature (on for release builds). Dev builds read `target/site` from disk. | Single-file distribution (§10.1). Dev keeps `cargo leptos watch` hot reload. |
 | CLI | **`clap`** (derive) with env-var fallbacks | One parser for binary users (flags) and Docker users (env vars). |
 | Shared types | `src/model/` module compiled for both `ssr` and `hydrate` | Protocol messages, result structs and AIM scoring live in one place. |
+| Dependency policy | **Latest stable releases**. No pre-releases on `main`. `Cargo.lock` is committed. Dependabot (or Renovate) opens weekly PRs for cargo, npm, GitHub Actions and Docker base images, and CI must pass before merge. MSRV = the highest `rust-version` among locked dependencies (currently 1.89, from `uuid`). | Stay current without surprise breakage. **Leptos 0.9** is in beta (`0.9.0-beta2`, Oct 2026). The upgrade is planned once 0.9.0 is stable and `leptos_axum` and `cargo-leptos` support it. |
 
 ## 5. Measurement methodology
 
@@ -745,10 +746,10 @@ are the supported path.
 ### 10.2 Docker image
 
 - Multi-stage `Dockerfile`:
-  - **Build stage**: `rust:1-bookworm` with the `wasm32-unknown-unknown` target and a
+  - **Build stage**: `rust:1-trixie` with the `wasm32-unknown-unknown` target and a
     pinned `cargo-leptos` release binary. It runs the same two-step build as §10.1, with
     `embed-assets` enabled.
-  - **Runtime stage**: today this is `debian:bookworm-slim` with a non-root user, the server
+  - **Runtime stage**: today this is `debian:trixie-slim` with a non-root user, the server
     binary and `site/`. *(Implemented in Milestone 0.)* Once assets are embedded (M6), it
     becomes `gcr.io/distroless/static` (or `scratch`) with only the musl binary, about 15 MB in total.
 - `HEALTHCHECK` runs `speed-test-rs healthcheck`, a built-in subcommand that calls `/api/health`. The runtime image needs no curl or apt packages, so this works in distroless or scratch images.
