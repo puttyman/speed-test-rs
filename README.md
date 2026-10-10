@@ -4,7 +4,8 @@ A self-hosted, [Cloudflare-style](https://speed.cloudflare.com) network speed te
 **local network**, built in Rust with [Leptos](https://github.com/leptos-rs/leptos) and
 [Axum](https://github.com/tokio-rs/axum).
 
-Run it in Docker on a machine in your home or office, then open it from any phone or laptop to
+Run it as a single self-contained binary or in Docker on a machine in your home or office,
+then open it from any phone or laptop to
 measure the link to that machine: download, upload, latency, jitter, latency under load and
 packet loss. Label each run with the room or access point and compare them in the history.
 
@@ -21,7 +22,21 @@ packet loss. Label each run with the room or access point and compare them in th
   SQLite for history and comparison.
 - Nothing leaves your network: no telemetry and no external assets.
 
-## Quick start (Docker)
+## Quick start
+
+### Standalone binary (planned for v0.1.0)
+
+Download the binary for your platform from GitHub Releases and run it. The UI is embedded in
+the binary, so nothing else is needed:
+
+```bash
+./speed-test-rs            # serves the UI and API on http://0.0.0.0:8080
+```
+
+> Not available yet: today the release binary still needs the `target/site` folder next to it.
+> Embedding is milestone M6 in [`docs/SPEC.md`](docs/SPEC.md#101-standalone-binary).
+
+### Docker
 
 ```bash
 docker compose up -d --build
