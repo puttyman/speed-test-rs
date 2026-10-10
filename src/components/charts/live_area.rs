@@ -313,7 +313,7 @@ pub fn LiveArea(
             </div>
             <ValuesTable
                 summary="Throughput values"
-                headers=vec!["Time", "Direction", "Speed"]
+                headers=vec!["Time", "Direction", "Speed"].into_iter().map(String::from).collect()
                 rows=table_rows
             />
         </div>

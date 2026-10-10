@@ -1,0 +1,362 @@
+// Group test result (SPEC §7.11): totals, fairness meter, stacked charts,
+// per-device shares.
+
+.group-result {
+	display: grid;
+	gap: var(--space-4);
+	min-width: 0;
+
+	.section-title {
+		margin: var(--space-6) 0 0;
+	}
+}
+
+.group-result-head {
+	display: grid;
+	gap: var(--space-1);
+
+	.muted {
+		font-size: var(--text-sm);
+	}
+}
+
+.group-totals {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.4fr);
+	gap: var(--space-3);
+
+	@media (max-width: 860px) {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+
+		.fairness-tile {
+			grid-column: 1 / -1;
+		}
+	}
+
+	.metric-value .value {
+		font-size: clamp(2rem, 1.4rem + 2vw, 3rem);
+	}
+}
+
+.fairness-tile {
+	gap: var(--space-4);
+
+	.metric-head {
+		margin-bottom: var(--space-1);
+	}
+}
+
+.fairness {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 6px var(--space-3);
+	align-items: center;
+}
+
+.fairness-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	min-width: 0;
+}
+
+.fairness-dir {
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	font-weight: 500;
+	min-width: 64px;
+}
+
+.fairness-verdict {
+	color: var(--color-text);
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+
+.fairness-index {
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.meter {
+	grid-column: 1 / -1;
+	position: relative;
+	height: 8px;
+	overflow: hidden;
+	border-radius: var(--radius-pill);
+	background: var(--color-brand-soft);
+
+	.is-even & {
+		background: var(--status-great-bg);
+	}
+
+	.is-uneven & {
+		background: var(--status-average-bg);
+	}
+}
+
+.meter-fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--color-text-muted);
+
+	.is-even & {
+		background: var(--status-good-fg);
+	}
+
+	.is-uneven & {
+		background: var(--status-average-fg);
+	}
+}
+
+// Callouts ------------------------------------------------------------------------------
+
+.callout {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-md);
+	background: var(--color-surface);
+	color: var(--color-text-body);
+	font-size: var(--text-sm);
+
+	&.callout-warn {
+		background: var(--status-average-bg);
+		color: var(--status-average-fg);
+	}
+}
+
+.callout-icon {
+	flex: none;
+	margin-top: 1px;
+}
+
+// Stacked area --------------------------------------------------------------------------
+
+.stack-legend {
+	flex-wrap: wrap;
+	margin-bottom: var(--space-3);
+
+	li {
+		color: var(--color-text-body);
+	}
+}
+
+.swatch-key {
+	display: inline-block;
+	flex: none;
+	width: 10px;
+	height: 10px;
+	border-radius: 3px;
+	background: var(--series);
+}
+
+.chart-svg {
+	.band-fill {
+		fill: var(--series);
+		fill-opacity: 0.22;
+		stroke: none;
+	}
+
+	.band-label {
+		fill: var(--color-text);
+		font-size: 11px;
+		font-weight: 600;
+		paint-order: stroke;
+		stroke: var(--color-surface);
+		stroke-width: 3px;
+		stroke-linejoin: round;
+	}
+}
+
+// Members table ---------------------------------------------------------------------------
+
+.members-card .card-title {
+	margin-bottom: var(--space-3);
+}
+
+.members-table-wrap {
+	overflow-x: auto;
+}
+
+.members-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+
+	th,
+	td {
+		padding: var(--space-3) var(--space-2);
+		border-bottom: 1px solid var(--color-border);
+		text-align: left;
+		vertical-align: middle;
+	}
+
+	thead th {
+		color: var(--color-text-muted);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		padding-top: 0;
+	}
+
+	tbody tr:last-child > * {
+		border-bottom: 0;
+	}
+
+	tbody th {
+		font-weight: 400;
+	}
+
+	td {
+		min-width: 140px;
+	}
+
+	.col-latency {
+		min-width: 0;
+		color: var(--color-text);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	tr.is-incomplete {
+		.share-value,
+		.member-name {
+			opacity: 0.55;
+		}
+
+		.member-sub {
+			color: var(--status-poor-fg);
+			font-weight: 500;
+		}
+	}
+
+	// Phones: one block per device, download and upload side by side.
+	@media (max-width: 640px) {
+		thead,
+		.col-latency {
+			display: none;
+		}
+
+		tbody {
+			display: grid;
+		}
+
+		tr {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: var(--space-2) var(--space-4);
+			padding: var(--space-3) 0;
+			border-bottom: 1px solid var(--color-border);
+		}
+
+		tbody tr:last-child {
+			border-bottom: 0;
+		}
+
+		th,
+		td {
+			min-width: 0;
+			padding: 0;
+			border-bottom: 0;
+		}
+
+		th[scope="row"] {
+			grid-column: 1 / -1;
+		}
+
+		td::before {
+			content: attr(data-label);
+			display: block;
+			margin-bottom: 2px;
+			color: var(--color-text-muted);
+			font-size: var(--text-xs);
+		}
+	}
+}
+
+.member-cell {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	min-width: 0;
+
+	.device-icon {
+		position: relative;
+		width: 32px;
+		height: 32px;
+		background: var(--color-bg);
+
+		&::after {
+			content: "";
+			position: absolute;
+			right: -1px;
+			bottom: -1px;
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			background: var(--series);
+			box-shadow: 0 0 0 2px var(--color-surface);
+		}
+	}
+}
+
+.member-text {
+	display: grid;
+	min-width: 0;
+}
+
+.member-name {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	color: var(--color-text);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.member-sub {
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.share-cell {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 4px var(--space-2);
+	align-items: baseline;
+}
+
+.share-value {
+	color: var(--color-text);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.share-pct {
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.share-track {
+	grid-column: 1 / -1;
+	height: 6px;
+	overflow: hidden;
+	border-radius: var(--radius-pill);
+	background: color-mix(in srgb, var(--series) 14%, var(--color-bg));
+}
+
+.share-bar {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--series);
+}

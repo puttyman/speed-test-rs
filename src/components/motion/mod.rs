@@ -7,7 +7,7 @@ pub mod packet_flow;
 pub mod reveal;
 
 pub use count_up::{CountUp, use_count_up};
-pub use packet_flow::{FlowMode, PacketFlow};
+pub use packet_flow::{FlowMode, OtherFlow, PacketFlow};
 pub use reveal::reveal_style;
 
 /// A `requestAnimationFrame` loop that runs `frame(timestamp_ms)` until it

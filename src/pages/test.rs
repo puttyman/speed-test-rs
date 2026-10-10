@@ -9,21 +9,28 @@ use leptos_router::hooks::use_query_map;
 use uuid::Uuid;
 
 use crate::components::MetricKind;
-use crate::components::charts::{
-    BoxPlotChart, BoxRow, DotPlot, LiveArea, LivePoint, LossBar, PayloadTick, Series,
+use crate::components::charts::{LiveArea, LivePoint, PayloadTick, Series};
+use crate::components::devices_panel::DevicesPanel;
+use crate::components::group_view::{
+    Countdown, GroupLanes, GroupResultView, plan_progress, use_group_total,
 };
 use crate::components::hero::Hero;
 use crate::components::icons;
 use crate::components::label_picker::{LabelPicker, clean_label};
 use crate::components::metric_tile::MetricTile;
-use crate::components::motion::{FlowMode, reveal_style};
+use crate::components::motion::{FlowMode, OtherFlow};
 use crate::components::phase_timeline::{PHASES, timeline};
+use crate::components::presence::{GroupStage, PresenceCtx, use_presence};
 use crate::components::quality_card::QualityCard;
+use crate::components::result_view::{
+    INFO_DOWNLOAD, INFO_JITTER, INFO_LATENCY, INFO_LOSS, INFO_UPLOAD, ResultDetails, SharedBadge,
+    shared_text,
+};
 use crate::components::server_card::ServerCard;
 use crate::model::device::default_label;
 use crate::model::profile::{PhaseStatus, Profile, Step};
-use crate::model::protocol::Phase;
-use crate::model::result::{PacketLossCounts, RunResult};
+use crate::model::protocol::{PeerState, Phase};
+use crate::model::result::{Concurrency, PacketLossCounts, RunResult};
 use crate::model::scores::Scores;
 use crate::model::units::{format_ms, format_rate};
 use crate::pages::api::{self, ServerInfo};
@@ -155,15 +162,29 @@ struct TestController {
     info: RwSignal<Option<ServerInfo>>,
     label: RwSignal<String>,
     profile_name: RwSignal<String>,
+    /// "Shared network" explanation once the saved run says it overlapped.
+    shared: RwSignal<Option<String>>,
+    /// Most other devices seen testing during this run (client view).
+    peers_seen: RwSignal<u32>,
+    /// The "Wait / Test anyway" prompt is open.
+    prompt: RwSignal<bool>,
+    /// Waiting for the other devices to finish before starting.
+    waiting: RwSignal<bool>,
     ui: crate::ui_state::UiState,
+    presence: PresenceCtx,
     #[cfg(feature = "hydrate")]
     handle: StoredValue<Option<crate::engine::EngineHandle>, LocalStorage>,
 }
 
 impl TestController {
-    fn new(ui: crate::ui_state::UiState) -> Self {
+    fn new(ui: crate::ui_state::UiState, presence: PresenceCtx) -> Self {
         Self {
             ui,
+            presence,
+            shared: RwSignal::new(None),
+            peers_seen: RwSignal::new(0),
+            prompt: RwSignal::new(false),
+            waiting: RwSignal::new(false),
             status: RwSignal::new(RunStatus::Idle),
             message: RwSignal::new(String::new()),
             steps: RwSignal::new(Profile::standard().steps),
@@ -194,7 +215,7 @@ impl TestController {
             saved_label: RwSignal::new(String::new()),
             announce: RwSignal::new(String::new()),
             info: RwSignal::new(None),
-            label: RwSignal::new(String::new()),
+            label: presence.label,
             profile_name: RwSignal::new("standard".into()),
             #[cfg(feature = "hydrate")]
             handle: StoredValue::new_local(None),
@@ -241,6 +262,22 @@ impl TestController {
         self.duration_ms.set(None);
         self.save.set(SaveState::Idle);
         self.message.set(String::new());
+        self.shared.set(None);
+        self.peers_seen.set(0);
+    }
+
+    /// Other devices are testing (visible or hidden).
+    fn others_busy(&self) -> bool {
+        !self.presence.others_testing().is_empty() || self.presence.hidden_active.get() > 0
+    }
+
+    /// Start pressed: asks first when other devices are testing (SPEC §5.11).
+    fn request_start(self) {
+        if self.status.get_untracked() != RunStatus::Running && untrack(|| self.others_busy()) {
+            self.prompt.set(true);
+            return;
+        }
+        self.toggle();
     }
 
     /// Starts a test, or stops the running one.
@@ -254,6 +291,8 @@ impl TestController {
                     }
                 });
             } else {
+                self.prompt.set(false);
+                self.waiting.set(false);
                 self.start();
             }
         }
@@ -276,12 +315,19 @@ impl TestController {
         };
         let profile_name = ui.profile.get_untracked();
         let profile = Profile::by_name(&profile_name).unwrap_or_default();
-        let mut device = engine::detect_device();
-        let name = ui.device_name.get_untracked();
-        if !name.trim().is_empty() {
-            device.device_name = name.trim().to_string();
-        }
-        let mut opts = EngineOptions::new(transport, profile, device);
+        // Reuse the page's presence session, so the server attributes this
+        // run's traffic to this device (live speed, overlap flags).
+        let mut opts = match self.presence.handle() {
+            Some(h) => h.engine_options(transport, profile),
+            None => {
+                let mut device = engine::detect_device();
+                let name = ui.device_name.get_untracked();
+                if !name.trim().is_empty() {
+                    device.device_name = name.trim().to_string();
+                }
+                EngineOptions::new(transport, profile, device)
+            }
+        };
         let max = self
             .info
             .get_untracked()
@@ -296,6 +342,7 @@ impl TestController {
         if let Some(l) = &label {
             storage_set(keys::LAST_LABEL, l);
         }
+        opts.label = label.clone();
 
         self.profile_name.set(profile_name);
         self.reset(opts.profile.steps.clone());
@@ -474,18 +521,41 @@ impl TestController {
             "Test finished. Download {d} {du}, upload {u} {uu}."
         ));
 
-        if !self.info.get_untracked().is_none_or(|i| i.history) {
-            return;
+        // "Shared network": the server's overlap record of the saved run
+        // (`GET /api/runs/{id}` after the POST, which only returns the id).
+        // Without history, fall back to the other devices this page saw
+        // testing during the run.
+        let seen = self.peers_seen.get_untracked();
+        let client_view = Concurrency {
+            peers_max: seen,
+            overlap_ms: 0.0,
+            overlap_ratio: if seen > 0 { 1.0 } else { 0.0 },
+        };
+        let history = self.info.get_untracked().is_none_or(|i| i.history);
+        if history {
+            self.save.set(SaveState::Saving);
         }
-        self.save.set(SaveState::Saving);
-        let save = self.save;
+        let (save, shared) = (self.save, self.shared);
         spawn_local(async move {
-            let state = match api::save_run(&result, session).await {
+            // Always posted with the session: the server fills in the
+            // overlap (and accepts, without storing, when history is off).
+            let posted = api::save_run(&result, session).await;
+            let state = match &posted {
                 Ok(saved) if saved.stored => SaveState::Saved(saved.id),
                 Ok(_) => SaveState::Idle,
-                Err(e) => SaveState::Failed(e),
+                Err(e) => SaveState::Failed(e.clone()),
             };
-            save.set(state);
+            if history {
+                save.set(state);
+            }
+            let concurrency = match posted {
+                Ok(saved) if saved.stored => api::get_run(saved.id)
+                    .await
+                    .map(|r| r.concurrency)
+                    .unwrap_or(client_view),
+                _ => client_view,
+            };
+            shared.set(shared_text(&concurrency));
         });
     }
 }
@@ -494,22 +564,17 @@ impl TestController {
 // Page
 // ---------------------------------------------------------------------------------------------
 
-const INFO_DOWNLOAD: &str =
-    "How fast data arrives from the server: the 90th percentile of all download requests.";
-const INFO_UPLOAD: &str =
-    "How fast data reaches the server: the 90th percentile of all upload requests.";
-const INFO_LATENCY: &str =
-    "The time a small message takes to reach the server and come back, on an idle network.";
-const INFO_JITTER: &str = "How much latency varies between measurements.";
-const INFO_LOSS: &str = "The share of small WebRTC packets that never arrived.";
-
 #[component]
 pub fn TestPage() -> impl IntoView {
     let ui = use_ui_state();
-    let test = TestController::new(ui);
+    let presence = use_presence();
+    let test = TestController::new(ui, presence);
     let status = test.status;
     let running = Signal::derive(move || status.get() == RunStatus::Running);
     let done = Signal::derive(move || status.get() == RunStatus::Done);
+    let stage = presence.stage;
+    let group_mode = Memo::new(move |_| stage.with(GroupStage::active));
+    let group_done = Memo::new(move |_| stage.with(|s| *s == GroupStage::Done));
 
     // Server info (name, history on/off, limits).
     Effect::new(move |_| {
@@ -521,7 +586,14 @@ pub fn TestPage() -> impl IntoView {
     });
 
     // Share run state and limits with the settings drawer.
-    Effect::new(move |_| ui.running.set(running.get()));
+    Effect::new(move |prev: Option<bool>| {
+        let r = running.get();
+        // A group run manages the flag itself.
+        if prev.is_some() || r {
+            ui.running.set(r || group_mode.get_untracked());
+        }
+        r
+    });
     Effect::new(move |_| {
         if let Some(i) = test.info.get() {
             ui.max_streams.set(i.limits.max_streams.max(1));
@@ -541,6 +613,32 @@ pub fn TestPage() -> impl IntoView {
                 default_label(&name, day, month)
             });
         test.label.set(label);
+    });
+    // Other devices see this device's label.
+    Effect::new(move |prev: Option<String>| {
+        let l = test.label.get();
+        let connected = presence.connected.get();
+        if connected && prev.as_deref() != Some(l.as_str()) && !running.get_untracked() {
+            presence.announce_label(clean_label(&l));
+        }
+        if connected { l } else { String::new() }
+    });
+
+    // Remember how many other devices tested during this run.
+    Effect::new(move |_| {
+        if running.get() {
+            let n = presence.others_testing().len() as u32 + presence.hidden_active.get();
+            if n > test.peers_seen.get_untracked() {
+                test.peers_seen.set(n);
+            }
+        }
+    });
+    // "Wait for them": start once nobody else is testing.
+    Effect::new(move |_| {
+        if test.waiting.get() && !test.others_busy() {
+            test.waiting.set(false);
+            test.toggle();
+        }
     });
 
     // Steps shown by the idle timeline follow the selected profile.
@@ -567,6 +665,15 @@ pub fn TestPage() -> impl IntoView {
     });
 
     let timeline_steps = Signal::derive(move || {
+        if group_mode.get() {
+            let steps = presence.group_plan.get();
+            let elapsed = presence.clock.get() - presence.group_starts_at.get();
+            let (mut st, cur, p) = plan_progress(&steps, elapsed);
+            if group_done.get() {
+                st = vec![Some(PhaseStatus::Done); steps.len()];
+            }
+            return timeline(&steps, &st, cur, p);
+        }
         let current = test.current.get();
         let progress = test.steps.with(|steps| {
             current
@@ -582,21 +689,49 @@ pub fn TestPage() -> impl IntoView {
         })
     });
 
-    // Hero content by state.
+    // Hero content by state (solo run or group test).
+    let group_total = use_group_total();
+    let group_phase = presence.group_phase;
     let hero_kind = Signal::derive(move || match (status.get(), test.phase.get()) {
+        _ if group_mode.get() => MetricKind::Rate,
         (RunStatus::Running, Phase::Latency) => MetricKind::Ms,
         (RunStatus::Running, Phase::PacketLoss) => MetricKind::Percent,
         _ => MetricKind::Rate,
     });
-    let hero_value = Signal::derive(move || match (status.get(), test.phase.get()) {
-        (RunStatus::Running, Phase::Latency) => test.latency.get(),
-        (RunStatus::Running, Phase::Download) => test.live_bps.get().or(test.download.get()),
-        (RunStatus::Running, Phase::Upload) => test.live_bps.get().or(test.upload.get()),
-        (RunStatus::Running, Phase::PacketLoss) => test.packet_loss.get(),
-        (RunStatus::Running, _) => None,
-        _ => test.download.get(),
+    let hero_value = Signal::derive(move || {
+        if group_mode.get() {
+            return match stage.get() {
+                GroupStage::Done => presence
+                    .group_result
+                    .with(|r| r.as_ref().and_then(|r| r.aggregate_download_bps)),
+                _ => group_total.get(),
+            };
+        }
+        match (status.get(), test.phase.get()) {
+            (RunStatus::Running, Phase::Latency) => test.latency.get(),
+            (RunStatus::Running, Phase::Download) => test.live_bps.get().or(test.download.get()),
+            (RunStatus::Running, Phase::Upload) => test.live_bps.get().or(test.upload.get()),
+            (RunStatus::Running, Phase::PacketLoss) => test.packet_loss.get(),
+            (RunStatus::Running, _) => None,
+            _ => test.download.get(),
+        }
     });
     let hero_title = Signal::derive(move || {
+        if group_mode.get() {
+            return match stage.get() {
+                GroupStage::Countdown { .. } => "Testing together".to_string(),
+                GroupStage::Done => "Total download".to_string(),
+                GroupStage::Waiting => "Collecting results".to_string(),
+                GroupStage::Failed(_) => "This device dropped out".to_string(),
+                _ => match group_phase.get() {
+                    Phase::Download => "Total download".to_string(),
+                    Phase::Upload => "Total upload".to_string(),
+                    Phase::Latency => "Latency, together".to_string(),
+                    Phase::Pause => "Switching to upload".to_string(),
+                    _ => "Testing together".to_string(),
+                },
+            };
+        }
         match (status.get(), test.phase.get()) {
             (RunStatus::Running, Phase::Idle | Phase::Pause) => "Connecting",
             (RunStatus::Running, p) => phase_name(p),
@@ -606,27 +741,95 @@ pub fn TestPage() -> impl IntoView {
         }
         .to_string()
     });
-    let hero_caption = Signal::derive(move || match status.get() {
-        RunStatus::Idle => "Measures download, upload and latency to this server.".to_string(),
-        RunStatus::Running => test
-            .current
-            .get()
-            .and_then(|i| test.steps.with(|s| s.get(i).map(step_label)))
-            .unwrap_or_else(|| "Opening connections…".into()),
-        RunStatus::Done => {
-            let unit = ui.units.get();
-            let (u, uu) = format_rate(test.upload.get().unwrap_or(f64::NAN), unit);
-            let (l, lu) = format_ms(test.latency.get().unwrap_or(f64::NAN));
-            let secs = test.duration_ms.get().unwrap_or(0) as f64 / 1000.0;
-            format!("Upload {u} {uu} · Latency {l} {lu} · {secs:.1} s")
+    let hero_caption = Signal::derive(move || {
+        if group_mode.get() {
+            let n = presence.group_members.with(Vec::len);
+            return match stage.get() {
+                GroupStage::Countdown { .. } => format!("{n} devices start at the same moment."),
+                GroupStage::Waiting => "Waiting for every device's result…".to_string(),
+                GroupStage::Failed(e) => e,
+                GroupStage::Done => {
+                    let unit = ui.units.get();
+                    let up = presence
+                        .group_result
+                        .with(|r| r.as_ref().and_then(|r| r.aggregate_upload_bps));
+                    let (u, uu) = format_rate(up.unwrap_or(f64::NAN), unit);
+                    format!("{n} devices · Total upload {u} {uu}")
+                }
+                _ => format!("{n} devices, measured by the server"),
+            };
         }
-        RunStatus::Failed => test.message.get(),
+        match status.get() {
+            RunStatus::Idle => "Measures download, upload and latency to this server.".to_string(),
+            RunStatus::Running => test
+                .current
+                .get()
+                .and_then(|i| test.steps.with(|s| s.get(i).map(step_label)))
+                .unwrap_or_else(|| "Opening connections…".into()),
+            RunStatus::Done => {
+                let unit = ui.units.get();
+                let (u, uu) = format_rate(test.upload.get().unwrap_or(f64::NAN), unit);
+                let (l, lu) = format_ms(test.latency.get().unwrap_or(f64::NAN));
+                let secs = test.duration_ms.get().unwrap_or(0) as f64 / 1000.0;
+                format!("Upload {u} {uu} · Latency {l} {lu} · {secs:.1} s")
+            }
+            RunStatus::Failed => test.message.get(),
+        }
     });
-    let flow_mode = Signal::derive(move || match (status.get(), test.phase.get()) {
-        (RunStatus::Running, Phase::Latency) => FlowMode::Latency,
-        (RunStatus::Running, Phase::Download) => FlowMode::Download,
-        (RunStatus::Running, Phase::Upload) => FlowMode::Upload,
-        _ => FlowMode::Idle,
+    let flow_mode = Signal::derive(move || {
+        let phase = if group_mode.get() {
+            group_phase.get()
+        } else if status.get() == RunStatus::Running {
+            test.phase.get()
+        } else {
+            Phase::Idle
+        };
+        match phase {
+            Phase::Latency => FlowMode::Latency,
+            Phase::Download => FlowMode::Download,
+            Phase::Upload => FlowMode::Upload,
+            _ => FlowMode::Idle,
+        }
+    });
+    let flow_bps = Signal::derive(move || {
+        if group_mode.get() {
+            group_total.get()
+        } else {
+            test.live_bps.get()
+        }
+    });
+    // Other devices' transfers, faint in their colors.
+    let others_flow = Signal::derive(move || {
+        presence.peers.with(|peers| {
+            peers
+                .iter()
+                .filter(|p| !p.is_you)
+                .filter_map(|p| match p.state {
+                    PeerState::Testing {
+                        phase,
+                        down_bps,
+                        up_bps,
+                        ..
+                    } => {
+                        let (mode, bps) = match phase {
+                            Phase::Download => (FlowMode::Download, down_bps),
+                            Phase::Upload => (FlowMode::Upload, up_bps),
+                            _ => return None,
+                        };
+                        let slot = match presence.color(p.id) {
+                            Series::Device(n) => n,
+                            _ => 1,
+                        };
+                        Some(OtherFlow { slot, mode, bps })
+                    }
+                    PeerState::Idle => None,
+                })
+                .collect()
+        })
+    });
+    let vt_name = Signal::derive(move || match test.save.get() {
+        SaveState::Saved(id) if !group_mode.get() => format!("run-{id}"),
+        _ => "hero-number".to_string(),
     });
 
     let button_label = move || match status.get() {
@@ -634,6 +837,7 @@ pub fn TestPage() -> impl IntoView {
         RunStatus::Running => "Stop",
         RunStatus::Done | RunStatus::Failed => "Test again",
     };
+    let in_group = Memo::new(move |_| presence.group.with(Option::is_some));
 
     let phase_is = move |p: Phase| Signal::derive(move || running.get() && test.phase.get() == p);
     let loaded_detail = move |v: RwSignal<Vec<f64>>| {
@@ -653,9 +857,17 @@ pub fn TestPage() -> impl IntoView {
         let n = test.latency_samples.with(Vec::len);
         (n > 0).then(|| format!("Median of {n} probes"))
     });
+    let loss_reason = Signal::derive(move || {
+        test.steps
+            .with(|s| loss_reason(&test.profile_name.get(), s))
+    });
 
     view! {
-        <div class="test-page" class:is-revealed=move || done.get()>
+        <div
+            class="test-page"
+            class:is-revealed=move || done.get() && !group_mode.get()
+            class:is-group=move || group_mode.get()
+        >
             <Hero
                 title=hero_title
                 value=hero_value
@@ -663,118 +875,287 @@ pub fn TestPage() -> impl IntoView {
                 caption=hero_caption
                 timeline=timeline_steps
                 flow_mode=flow_mode
-                flow_bps=test.live_bps
+                flow_bps=flow_bps
                 pulses=test.pulses
-                idle=Signal::derive(move || status.get() == RunStatus::Idle)
+                idle=Signal::derive(move || {
+                    if group_mode.get() {
+                        matches!(stage.get(), GroupStage::Countdown { .. })
+                    } else {
+                        status.get() == RunStatus::Idle
+                    }
+                })
+                others=others_flow
+                vt_name=vt_name
             >
-                <div class="hero-actions">
-                    <Show when=move || test.history_on()>
-                        <LabelPicker
-                            label=test.label
-                            device_id=ui.device_id
-                            disabled=running
-                        />
-                    </Show>
-                    <button
-                        type="button"
-                        class="start-button"
-                        class:is-idle=move || status.get() == RunStatus::Idle
-                        class:is-running=running
-                        on:click=move |_| test.toggle()
-                    >
-                        {button_label}
-                    </button>
-                    <SaveNotice test=test/>
-                </div>
+                <Countdown/>
+                {move || {
+                    if group_mode.get() {
+                        view! { <GroupActions/> }.into_any()
+                    } else {
+                        view! {
+                            <div class="hero-actions">
+                                <Show when=move || test.history_on()>
+                                    <LabelPicker
+                                        label=test.label
+                                        device_id=ui.device_id
+                                        disabled=running
+                                    />
+                                </Show>
+                                <button
+                                    type="button"
+                                    class="start-button"
+                                    class:is-idle=move || status.get() == RunStatus::Idle && !test.waiting.get()
+                                    class:is-running=running
+                                    disabled=move || in_group.get() && !running.get()
+                                    on:click=move |_| test.request_start()
+                                >
+                                    {button_label}
+                                </button>
+                                <BusyPrompt test=test/>
+                                <SaveNotice test=test/>
+                                {move || {
+                                    test.shared
+                                        .get()
+                                        .filter(|_| done.get())
+                                        .map(|d| view! { <SharedBadge detail=d long=true/> })
+                                }}
+                            </div>
+                        }
+                            .into_any()
+                    }
+                }}
             </Hero>
 
             <p class="visually-hidden" aria-live="polite" role="status">
                 {move || test.announce.get()}
             </p>
 
-            <section class="card live-card" aria-label="Live throughput">
-                <LiveArea
-                    points=test.live_points
-                    ticks=test.payload_ticks
-                    empty_text=Signal::derive(move || {
-                        if running.get() {
-                            "Waiting for the first transfer…".to_string()
-                        } else {
-                            "Throughput appears here while the test runs.".to_string()
-                        }
-                    })
-                />
-            </section>
+            <Show when=move || !group_mode.get()>
+                <DevicesPanel busy=running/>
+            </Show>
 
-            <section class="metric-grid" aria-label="Results">
-                <MetricTile
-                    label="Download"
-                    info=INFO_DOWNLOAD
-                    kind=MetricKind::Rate
-                    value=test.download
-                    series=Series::Download
-                    samples=test.down_samples
-                    detail=loaded_detail(test.down_loaded)
-                    active=phase_is(Phase::Download)
-                    index=0
-                />
-                <MetricTile
-                    label="Upload"
-                    info=INFO_UPLOAD
-                    kind=MetricKind::Rate
-                    value=test.upload
-                    series=Series::Upload
-                    samples=test.up_samples
-                    detail=loaded_detail(test.up_loaded)
-                    active=phase_is(Phase::Upload)
-                    index=1
-                />
-                <MetricTile
-                    label="Latency"
-                    info=INFO_LATENCY
-                    kind=MetricKind::Ms
-                    value=test.latency
-                    series=Series::Latency
-                    samples=test.latency_samples
-                    detail=latency_detail
-                    active=phase_is(Phase::Latency)
-                    index=2
-                />
-                <MetricTile
-                    label="Jitter"
-                    info=INFO_JITTER
-                    kind=MetricKind::Ms
-                    value=test.jitter
-                    series=Series::Latency
-                    samples=test.jitter_samples
-                    active=phase_is(Phase::Latency)
-                    index=3
-                />
-                <MetricTile
-                    label="Packet loss"
-                    info=INFO_LOSS
-                    kind=MetricKind::Percent
-                    value=test.packet_loss
-                    detail=loss_detail
-                    active=phase_is(Phase::PacketLoss)
-                    index=4
-                />
-            </section>
+            <Show
+                when=move || !group_mode.get()
+                fallback=move || {
+                    view! {
+                        <Show
+                            when=move || group_done.get()
+                            fallback=|| view! { <GroupLanes/> }
+                        >
+                            {move || {
+                                presence
+                                    .group_result
+                                    .get()
+                                    .map(|r| {
+                                        view! { <GroupResultView result=r me=presence.session.get_untracked().unwrap_or_default()/> }
+                                    })
+                            }}
+                        </Show>
+                    }
+                }
+            >
+                <section class="card live-card" aria-label="Live throughput">
+                    <LiveArea
+                        points=test.live_points
+                        ticks=test.payload_ticks
+                        empty_text=Signal::derive(move || {
+                            if running.get() {
+                                "Waiting for the first transfer…".to_string()
+                            } else {
+                                "Throughput appears here while the test runs.".to_string()
+                            }
+                        })
+                    />
+                </section>
 
-            <div class="card-row">
-                <QualityCard scores=test.scores/>
-                <ServerCard
-                    info=test.info
-                    transport=ui.transport
-                    profile=ui.profile
-                    streams=ui.streams
-                />
-            </div>
+                <section class="metric-grid" aria-label="Results">
+                    <MetricTile
+                        label="Download"
+                        info=INFO_DOWNLOAD
+                        kind=MetricKind::Rate
+                        value=test.download
+                        series=Series::Download
+                        samples=test.down_samples
+                        detail=loaded_detail(test.down_loaded)
+                        active=phase_is(Phase::Download)
+                        index=0
+                    />
+                    <MetricTile
+                        label="Upload"
+                        info=INFO_UPLOAD
+                        kind=MetricKind::Rate
+                        value=test.upload
+                        series=Series::Upload
+                        samples=test.up_samples
+                        detail=loaded_detail(test.up_loaded)
+                        active=phase_is(Phase::Upload)
+                        index=1
+                    />
+                    <MetricTile
+                        label="Latency"
+                        info=INFO_LATENCY
+                        kind=MetricKind::Ms
+                        value=test.latency
+                        series=Series::Latency
+                        samples=test.latency_samples
+                        detail=latency_detail
+                        active=phase_is(Phase::Latency)
+                        index=2
+                    />
+                    <MetricTile
+                        label="Jitter"
+                        info=INFO_JITTER
+                        kind=MetricKind::Ms
+                        value=test.jitter
+                        series=Series::Latency
+                        samples=test.jitter_samples
+                        active=phase_is(Phase::Latency)
+                        index=3
+                    />
+                    <MetricTile
+                        label="Packet loss"
+                        info=INFO_LOSS
+                        kind=MetricKind::Percent
+                        value=test.packet_loss
+                        detail=loss_detail
+                        active=phase_is(Phase::PacketLoss)
+                        index=4
+                    />
+                </section>
 
-            <Show when=move || test.result.with(Option::is_some)>
-                <Details test=test/>
+                <div class="card-row">
+                    <QualityCard scores=test.scores/>
+                    <ServerCard
+                        info=test.info
+                        transport=ui.transport
+                        profile=ui.profile
+                        streams=ui.streams
+                    />
+                </div>
+
+                <Show when=move || test.result.with(Option::is_some)>
+                    <ResultDetails result=test.result loss_reason=loss_reason/>
+                </Show>
             </Show>
         </div>
+    }
+}
+
+/// Group test controls in the hero: Leave while running, Done afterwards.
+#[component]
+fn GroupActions() -> impl IntoView {
+    let presence = use_presence();
+    let stage = presence.stage;
+    view! {
+        <div class="hero-actions">
+            {move || match stage.get() {
+                GroupStage::Done | GroupStage::Failed(_) => {
+                    view! {
+                        <button
+                            type="button"
+                            class="start-button"
+                            on:click=move |_| presence.leave_group()
+                        >
+                            "Done"
+                        </button>
+                    }
+                        .into_any()
+                }
+                _ => {
+                    view! {
+                        <button
+                            type="button"
+                            class="start-button is-running"
+                            on:click=move |_| presence.leave_group()
+                        >
+                            "Leave"
+                        </button>
+                    }
+                        .into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+/// "Other devices are testing": Wait for them / Test anyway (SPEC §7.11).
+#[component]
+fn BusyPrompt(test: TestController) -> impl IntoView {
+    let presence = test.presence;
+    let names = move || {
+        let others = presence.others_testing();
+        let hidden = presence.hidden_active.get();
+        let mut parts: Vec<String> = others.iter().map(|p| p.device_name.clone()).collect();
+        if hidden > 0 {
+            parts.push(if hidden == 1 {
+                "a hidden device".to_string()
+            } else {
+                format!("{hidden} hidden devices")
+            });
+        }
+        match parts.len() {
+            0 => "Another device".to_string(),
+            1 => parts.remove(0),
+            _ => {
+                let last = parts.pop().unwrap_or_default();
+                format!("{} and {last}", parts.join(", "))
+            }
+        }
+    };
+    let busy = Signal::derive(move || {
+        presence.others_testing().len() + presence.hidden_active.get() as usize
+    });
+    view! {
+        {move || {
+            if test.waiting.get() {
+                view! {
+                    <div class="busy-prompt is-waiting" role="status">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <p>{format!("Waiting for {} to finish…", names())}</p>
+                        <button
+                            type="button"
+                            class="link-button"
+                            on:click=move |_| test.waiting.set(false)
+                        >
+                            "Cancel"
+                        </button>
+                    </div>
+                }
+                    .into_any()
+            } else if test.prompt.get() {
+                let verb = if busy.get() == 1 { "is" } else { "are" };
+                view! {
+                    <div class="busy-prompt" role="alertdialog" aria-labelledby="busy-text">
+                        <p id="busy-text">
+                            <strong>{format!("{} {verb} testing right now.", names())}</strong>
+                            " Testing at the same time shares the network, so both results come out lower."
+                        </p>
+                        <div class="busy-actions">
+                            <button
+                                type="button"
+                                class="pill-button pill-sm"
+                                on:click=move |_| {
+                                    test.prompt.set(false);
+                                    test.waiting.set(true);
+                                }
+                            >
+                                "Wait for them"
+                            </button>
+                            <button
+                                type="button"
+                                class="pill-button pill-sm pill-ghost"
+                                on:click=move |_| test.toggle()
+                            >
+                                "Test anyway"
+                            </button>
+                        </div>
+                    </div>
+                }
+                    .into_any()
+            } else {
+                ().into_any()
+            }
+        }}
     }
 }
 
@@ -894,91 +1275,6 @@ fn SaveNotice(test: TestController) -> impl IntoView {
                 }
             }}
         </div>
-    }
-}
-
-/// Detail cards, shown once a run has finished.
-#[component]
-fn Details(test: TestController) -> impl IntoView {
-    let result = test.result;
-    let rows = Signal::derive(move || {
-        result.with(|r| {
-            r.as_ref()
-                .map(|r| {
-                    vec![
-                        BoxRow {
-                            label: "Idle",
-                            series: Series::Latency,
-                            values: r.points.latency.clone(),
-                            jitter_ms: r.summary.jitter_ms,
-                        },
-                        BoxRow {
-                            label: "During download",
-                            series: Series::Download,
-                            values: r.points.down_loaded_latency.clone(),
-                            jitter_ms: r.summary.down_loaded_jitter_ms,
-                        },
-                        BoxRow {
-                            label: "During upload",
-                            series: Series::Upload,
-                            values: r.points.up_loaded_latency.clone(),
-                            jitter_ms: r.summary.up_loaded_jitter_ms,
-                        },
-                    ]
-                })
-                .unwrap_or_default()
-        })
-    });
-    let down = Signal::derive(move || {
-        result.with(|r| {
-            r.as_ref()
-                .map(|r| r.points.download.clone())
-                .unwrap_or_default()
-        })
-    });
-    let up = Signal::derive(move || {
-        result.with(|r| {
-            r.as_ref()
-                .map(|r| r.points.upload.clone())
-                .unwrap_or_default()
-        })
-    });
-    let down_p90 =
-        Signal::derive(move || result.with(|r| r.as_ref().and_then(|r| r.summary.download_bps)));
-    let up_p90 =
-        Signal::derive(move || result.with(|r| r.as_ref().and_then(|r| r.summary.upload_bps)));
-    let loss =
-        Signal::derive(move || result.with(|r| r.as_ref().and_then(|r| r.points.packet_loss)));
-    let reason = Signal::derive(move || {
-        test.steps
-            .with(|s| loss_reason(&test.profile_name.get(), s))
-    });
-    view! {
-        <section class="details" aria-labelledby="details-title">
-            <h2 id="details-title" class="section-title">"Details"</h2>
-            <div class="details-grid">
-                <article class="card detail-card reveal" style=reveal_style(8)>
-                    <h3 class="card-title">"Latency"</h3>
-                    <p class="card-sub">"Round trips while idle and while the link is busy."</p>
-                    <BoxPlotChart rows=rows/>
-                </article>
-                <article class="card detail-card reveal" style=reveal_style(9)>
-                    <h3 class="card-title">"Packet loss"</h3>
-                    <p class="card-sub">"Small packets sent over WebRTC."</p>
-                    <LossBar counts=loss reason=reason/>
-                </article>
-                <article class="card detail-card reveal" style=reveal_style(10)>
-                    <h3 class="card-title">"Download"</h3>
-                    <p class="card-sub">"Every request, grouped by payload size."</p>
-                    <DotPlot points=down series=Series::Download p90=down_p90/>
-                </article>
-                <article class="card detail-card reveal" style=reveal_style(11)>
-                    <h3 class="card-title">"Upload"</h3>
-                    <p class="card-sub">"Every request, grouped by payload size."</p>
-                    <DotPlot points=up series=Series::Upload p90=up_p90/>
-                </article>
-            </div>
-        </section>
     }
 }
 

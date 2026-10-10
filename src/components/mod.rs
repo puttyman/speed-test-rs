@@ -2,6 +2,8 @@
 //! history, compare and run pages can reuse tiles, charts and toggles.
 
 pub mod charts;
+pub mod devices_panel;
+pub mod group_view;
 pub mod hero;
 pub mod icons;
 pub mod info_tip;
@@ -9,8 +11,10 @@ pub mod label_picker;
 pub mod metric_tile;
 pub mod motion;
 pub mod phase_timeline;
+pub mod presence;
 pub mod pwa_toast;
 pub mod quality_card;
+pub mod result_view;
 pub mod segmented;
 pub mod server_card;
 pub mod settings_drawer;

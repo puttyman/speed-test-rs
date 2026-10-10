@@ -48,6 +48,18 @@
 	--series-upload: #d6457f;
 	--series-latency: #bf7400;
 
+	// Per-device / per-item categorical colors (dataviz reference palette,
+	// fixed slot order: blue, orange, aqua, yellow, magenta, green, violet, red).
+	// Used for group tests and compare. Above 3 series, charts add direct labels.
+	--device-1: #2a78d6;
+	--device-2: #eb6834;
+	--device-3: #1baf7a;
+	--device-4: #eda100;
+	--device-5: #e87ba4;
+	--device-6: #008300;
+	--device-7: #6250d6;
+	--device-8: #e34948;
+
 	// Status (quality badges): soft background + strong text
 	--status-great-bg: #eff3f0;
 	--status-great-fg: #005011;
@@ -131,6 +143,14 @@
 	--series-download: #3987e5;
 	--series-upload: #d55181;
 	--series-latency: #c98500;
+	--device-1: #3987e5;
+	--device-2: #d95926;
+	--device-3: #199e70;
+	--device-4: #c98500;
+	--device-5: #d55181;
+	--device-6: #008300;
+	--device-7: #9085e9;
+	--device-8: #e66767;
 	--status-great-bg: #12301b;
 	--status-great-fg: #7fd99a;
 	--status-good-bg: #12301b;

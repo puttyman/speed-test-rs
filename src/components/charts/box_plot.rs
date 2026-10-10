@@ -12,7 +12,7 @@ use crate::model::units::{PLACEHOLDER, format_ms};
 /// One row of the chart.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoxRow {
-    pub label: &'static str,
+    pub label: String,
     pub series: Series,
     pub values: Vec<f64>,
     pub jitter_ms: Option<f64>,
@@ -35,7 +35,15 @@ fn opt_ms(v: Option<f64>) -> String {
 }
 
 #[component]
-pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
+pub fn BoxPlotChart(
+    #[prop(into)] rows: Signal<Vec<BoxRow>>,
+    /// Accessible name of the chart.
+    #[prop(default = "Latency distribution: idle, during download and during upload")]
+    aria_label: &'static str,
+    /// Header of the values table's first column.
+    #[prop(default = "Condition")]
+    row_header: &'static str,
+) -> impl IntoView {
     let node = NodeRef::<html::Div>::new();
     let width = use_width(node, 480.0);
     let (tip, set_tip) = signal(None::<Tip>);
@@ -72,7 +80,7 @@ pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
         set_tip.set(found.map(|(i, row, b)| Tip {
             x: g.x.map(b.q3),
             y: i as f64 * ROW_H + 4.0,
-            title: row.label.to_string(),
+            title: row.label.clone(),
             rows: vec![
                 TipRow {
                     series: Some(row.series),
@@ -104,7 +112,7 @@ pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
                 .map(|r| {
                     let b = box_plot(&r.values);
                     vec![
-                        r.label.to_string(),
+                        r.label.clone(),
                         r.values.len().to_string(),
                         opt_ms(b.map(|b| b.min)),
                         opt_ms(b.map(|b| b.median)),
@@ -124,7 +132,7 @@ pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
                 height=height
                 viewBox=move || geo.with(|g| format!("0 0 {} {}", g.w, height()))
                 role="img"
-                aria-label="Latency distribution: idle, during download and during upload"
+                aria-label=aria_label
                 on:pointermove=on_move
                 on:pointerleave=move |_| set_tip.set(None)
             >
@@ -164,7 +172,7 @@ pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
                             let y0 = i as f64 * ROW_H;
                             let caption = match row.jitter_ms {
                                 Some(j) => format!("{} · jitter {}", row.label, ms(j)),
-                                None => row.label.to_string(),
+                                None => row.label.clone(),
                             };
                             let marks = b.map(|b| {
                                 let (x0, x1) = (g.x.map(b.min), g.x.map(b.max));
@@ -205,7 +213,7 @@ pub fn BoxPlotChart(#[prop(into)] rows: Signal<Vec<BoxRow>>) -> impl IntoView {
         </div>
         <ValuesTable
             summary="Latency values"
-            headers=vec!["Condition", "Samples", "Min", "Median", "Max", "Jitter"]
+            headers=vec![row_header, "Samples", "Min", "Median", "Max", "Jitter"].into_iter().map(String::from).collect()
             rows=table_rows
         />
     }

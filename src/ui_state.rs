@@ -21,6 +21,7 @@ pub mod keys {
     pub const TRANSPORT: &str = "speedtest.transport";
     pub const PROFILE: &str = "speedtest.profile";
     pub const STREAMS: &str = "speedtest.streams";
+    pub const HIDE_ME: &str = "speedtest.hide_me";
 }
 
 /// Color theme preference.
@@ -146,6 +147,8 @@ pub struct UiState {
     pub running: RwSignal<bool>,
     /// The server's stream limit (from `/api/info`).
     pub max_streams: RwSignal<u8>,
+    /// "Hide me": other devices don't see this one by name (SPEC §5.11).
+    pub hide_me: RwSignal<bool>,
 }
 
 impl UiState {
@@ -164,6 +167,7 @@ impl UiState {
             settings_open: RwSignal::new(false),
             running: RwSignal::new(false),
             max_streams: RwSignal::new(MAX_STREAMS),
+            hide_me: RwSignal::new(false),
         }
     }
 
@@ -231,6 +235,12 @@ pub fn provide_ui_state() -> UiState {
         }
     });
     Effect::new(move |_| {
+        let hide = ui.hide_me.get();
+        if ui.loaded.get() {
+            storage_set(keys::HIDE_ME, if hide { "1" } else { "0" });
+        }
+    });
+    Effect::new(move |_| {
         let (t, p, s) = (ui.transport.get(), ui.profile.get(), ui.streams.get());
         if ui.loaded.get() {
             storage_set(keys::TRANSPORT, &t);
@@ -268,6 +278,9 @@ fn load(ui: UiState) {
         .filter(|s| (1..=MAX_STREAMS).contains(s))
     {
         ui.streams.set(s);
+    }
+    if storage_get(keys::HIDE_ME).as_deref() == Some("1") {
+        ui.hide_me.set(true);
     }
     browser::init(ui);
 }
