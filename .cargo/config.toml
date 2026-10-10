@@ -1,0 +1,6 @@
+[env]
+# `leptos` reads this at compile time to name the hydration bundle
+# (`/pkg/speed-test-rs.wasm` rather than `..._bg.wasm`). cargo-leptos sets it itself;
+# this makes a plain `cargo build --features ssr,embed-assets` (docs/SPEC.md §10.1)
+# produce the same server.
+LEPTOS_OUTPUT_NAME = "speed-test-rs"
