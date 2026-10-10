@@ -1051,8 +1051,7 @@ written; they haven't run on GitHub yet.
 
 ## 16. Open questions
 
-1. **Parallel streams default**: *proposal*: 1 stream for `standard` (Cloudflare-like,
-   reflects single-flow behavior), 4 for `extended`.
+None at the moment.
 
 ### Decided
 
@@ -1068,4 +1067,5 @@ written; they haven't run on GitHub yet.
 | Dependencies | Latest stable releases. Leptos 0.9 adopted once stable (§4.1). |
 | Motion | Packet flow, count-up, live chart, phase timeline, result reveal, view transitions (§7.3) |
 | PWA | Yes. Full install and offline support over HTTPS (§7.9). |
+| Parallel streams | 1 stream for `quick` and `standard` (Cloudflare-like, reflects single-flow behavior); `extended` uses 4 for its largest transfers. Users can change it in settings (1–8). |
 | WebRTC library | **str0m** (ICE-lite, one UDP port). In testing, it handled 1000 unreliable messages at 10 per 10 ms with 0 loss and no head-of-line blocking, and measured 2.0% with 2% injected loss. |
