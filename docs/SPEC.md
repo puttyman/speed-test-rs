@@ -480,7 +480,7 @@ speed-test-rs --version | --help
 
 | Flag | Env var | Default | Description |
 |---|---|---|---|
-| `-l, --listen <ADDR>` | `SPEEDTEST_LISTEN` (alias `LEPTOS_SITE_ADDR`) | `0.0.0.0:8080` | HTTP/WS listen address. `cargo leptos watch` uses `127.0.0.1:3000`. |
+| `-l, --listen <ADDR>` | `SPEEDTEST_LISTEN` (alias `LEPTOS_SITE_ADDR`) | `0.0.0.0:8080` **and** `[::]:8080` (all interfaces, IPv4 and IPv6) | HTTP/WS listen address. Listening on every interface is the default for both the binary and Docker, so phones on the LAN can reach it without extra flags (*decided 2026-10-10*). Pass e.g. `127.0.0.1:8080` to restrict it. If IPv6 is unavailable, the server logs a warning and continues on IPv4 only. `cargo leptos watch` uses `127.0.0.1:3000`. |
 | `--udp-port <PORT>` | `SPEEDTEST_UDP_PORT` | `3478` | WebRTC UDP port |
 | `--public-ip <IP>` | `SPEEDTEST_PUBLIC_IP` | auto | IP advertised in ICE candidates. Set it under Docker bridge networking. |
 | `--server-name <NAME>` | `SPEEDTEST_SERVER_NAME` | hostname | Shown in the UI and the history |
@@ -640,6 +640,10 @@ plainly: the test measures the slowest hop between the browser and the server.
 ## 11. Security and privacy
 
 - Designed for a **trusted LAN**. No auth by default.
+- The server **listens on all interfaces by default** (§9.2). The startup log says so in
+  one line (`listening on all interfaces (0.0.0.0:8080, [::]:8080); use --listen 127.0.0.1:8080 to restrict`).
+  The README tells laptop users on untrusted networks (cafés, hotels) to restrict it or stop the
+  server.
 - Optional `SPEEDTEST_AUTH_TOKEN`:
   - The UI asks for the token once and keeps it in a cookie.
   - The API accepts `Authorization: Bearer`.
@@ -724,9 +728,6 @@ Dockerfile, docker-compose.yml
 3. **Labels as free text or managed entities**: free text with autocomplete is proposed.
    Managed "locations" (with icons and an AP model) could come later.
 4. **Units**: default to Mbps (like Cloudflare), with a toggle for MB/s?
-5. **Default bind address for the binary**: `0.0.0.0:8080` is proposed, since the tool is
-   useless if phones on the LAN can't reach it. The alternative is `127.0.0.1` with a
-   `--lan` flag, which is safer on a laptop on public Wi-Fi but adds a step every time.
-6. **Release tooling**: `cargo-dist` (generated workflow, installers, less to maintain) or a
+5. **Release tooling**: `cargo-dist` (generated workflow, installers, less to maintain) or a
    hand-written GitHub Actions matrix (full control over the two-step leptos build)?
    Confirm during M7 that cargo-dist can run the `cargo leptos build` pre-step.
