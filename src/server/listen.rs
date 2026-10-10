@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::serve::ListenerExt;
 use axum_server::tls_rustls::RustlsConfig;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::watch;
@@ -113,7 +114,10 @@ pub async fn serve(
     let mut tasks = JoinSet::new();
 
     for listener in http {
-        let listener = tokio::net::TcpListener::from_std(listener)?;
+        // TCP_NODELAY so latency probes (ping/pong) aren't held back by Nagle's algorithm.
+        let listener = tokio::net::TcpListener::from_std(listener)?.tap_io(|stream| {
+            let _ = stream.set_nodelay(true);
+        });
         let app = app.clone();
         let mut stop = stop_rx.clone();
         tasks.spawn(async move {
@@ -131,8 +135,11 @@ pub async fn serve(
     let handle = axum_server::Handle::new();
     if let Some((listeners, config)) = tls {
         for listener in listeners {
-            let server =
-                axum_server::from_tcp_rustls(listener, config.clone())?.handle(handle.clone());
+            let acceptor = axum_server::tls_rustls::RustlsAcceptor::new(config.clone())
+                .acceptor(axum_server::accept::NoDelayAcceptor::new());
+            let server = axum_server::from_tcp(listener)?
+                .acceptor(acceptor)
+                .handle(handle.clone());
             let app = app.clone();
             tasks.spawn(async move {
                 server
