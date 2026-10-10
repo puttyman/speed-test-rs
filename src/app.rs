@@ -1,9 +1,28 @@
-use crate::error_template::{AppError, ErrorTemplate};
-use leptos::*;
-use leptos_meta::*;
-use leptos_router::*;
-// Import on Demand
-use thaw::{Button, ButtonVariant};
+use leptos::prelude::*;
+use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
+use leptos_router::{
+    components::{Route, Router, Routes},
+    StaticSegment,
+};
+
+/// HTML document shell rendered by the server around the hydrated `App`.
+pub fn shell(options: LeptosOptions) -> impl IntoView {
+    view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8"/>
+                <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <AutoReload options=options.clone()/>
+                <HydrationScripts options/>
+                <MetaTags/>
+            </head>
+            <body>
+                <App/>
+            </body>
+        </html>
+    }
+}
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -11,54 +30,109 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
 
     view! {
-
-
-        // injects a stylesheet into the document <head>
         // id=leptos means cargo-leptos will hot-reload this stylesheet
-        <Stylesheet id="leptos" href="/pkg/leptops-axum.css"/>
+        <Stylesheet id="leptos" href="/pkg/speed-test-rs.css"/>
+        <Title text="Speed Test"/>
 
-        // sets the document title
-        <Title text="Welcome to Leptos"/>
-
-        // content for this welcome page
-        <Router fallback=|| {
-            let mut outside_errors = Errors::default();
-            outside_errors.insert_with_default_key(AppError::NotFound);
-            view! {
-                <ErrorTemplate outside_errors/>
-            }
-            .into_view()
-        }>
-            <main>
-                <Routes>
-                    <Route path="" view=HomePage/>
+        <Router>
+            <Header/>
+            <main class="page">
+                <Routes fallback=|| view! { <NotFound/> }>
+                    <Route path=StaticSegment("") view=HomePage/>
                 </Routes>
             </main>
         </Router>
     }
 }
 
-/// Renders the home page of your application.
 #[component]
-fn HomePage() -> impl IntoView {
-    // Creates a reactive value to update the button
-    let (count, set_count) = create_signal(0);
-    let on_click = move |_| set_count.update(|count| *count += 1);
-
+fn Header() -> impl IntoView {
     view! {
-        <h1>"Welcome to Leptos!zz"</h1>
-        <Button variant=ButtonVariant::Primary on:click=on_click>"Click Me: " {count}</Button>
+        <header class="site-header">
+            <a class="brand" href="/">
+                <span class="brand-mark" aria-hidden="true"></span>
+                "speed-test-rs"
+            </a>
+            <nav class="site-nav">
+                <a href="/">"Test"</a>
+            </nav>
+        </header>
     }
 }
 
-// #[server(output = StreamingText)]
-// pub async fn file_progress(filename: String) -> Result<TextStream, ServerFnError> {
-//     println!("getting progress on {filename}");
-//     // get the stream of current length for the file
-//     let progress = progress::for_file(&filename);
-//     // separate each number with a newline
-//     // the HTTP response might pack multiple lines of this into a single chunk
-//     // we need some way of dividing them up
-//     let progress = progress.map(|bytes| Ok(format!("{bytes}\n")));
-//     Ok(TextStream::new(progress))
-// }
+/// The measurement view. Values are placeholders until the WebSocket engine
+/// (Milestone 1 in docs/SPEC.md) is wired up.
+#[component]
+fn HomePage() -> impl IntoView {
+    view! {
+        <section class="hero">
+            <div class="hero-primary">
+                <h1 class="hero-title">"Your network speed"</h1>
+                <div class="hero-value">
+                    <span class="value">"—"</span>
+                    <span class="unit">"Mbps"</span>
+                </div>
+                <button
+                    class="start-button"
+                    disabled=true
+                    title="The measurement engine is not implemented yet. See docs/SPEC.md."
+                >
+                    "Start test"
+                </button>
+            </div>
+            <div class="metric-grid">
+                <Metric label="Download" unit="Mbps" kind="download"/>
+                <Metric label="Upload" unit="Mbps" kind="upload"/>
+                <Metric label="Latency" unit="ms" kind="latency"/>
+                <Metric label="Jitter" unit="ms" kind="jitter"/>
+                <Metric label="Packet loss" unit="%" kind="loss"/>
+            </div>
+        </section>
+
+        <section class="card-row">
+            <div class="card">
+                <h2>"Network quality score"</h2>
+                <ul class="quality-list">
+                    <li><span>"Video streaming"</span><span class="badge">"—"</span></li>
+                    <li><span>"Online gaming"</span><span class="badge">"—"</span></li>
+                    <li><span>"Video chatting"</span><span class="badge">"—"</span></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h2>"Server"</h2>
+                <p class="muted">"Self-hosted on your local network"</p>
+            </div>
+        </section>
+    }
+}
+
+#[component]
+fn Metric(label: &'static str, unit: &'static str, kind: &'static str) -> impl IntoView {
+    view! {
+        <div class=format!("metric metric-{kind}")>
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">
+                <span class="value">"—"</span>
+                <span class="unit">{unit}</span>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn NotFound() -> impl IntoView {
+    // Set the HTTP status to 404 when rendering on the server
+    #[cfg(feature = "ssr")]
+    {
+        if let Some(resp) = use_context::<leptos_axum::ResponseOptions>() {
+            resp.set_status(axum::http::StatusCode::NOT_FOUND);
+        }
+    }
+
+    view! {
+        <section class="card">
+            <h1>"404"</h1>
+            <p>"Page not found. " <a href="/">"Back to the speed test"</a></p>
+        </section>
+    }
+}
