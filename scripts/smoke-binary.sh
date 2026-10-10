@@ -47,8 +47,9 @@ env -i PATH="$PATH" HOME="$work" \
     >"$work/server.log" 2>&1 &
 pid=$!
 
+# Up to 30 s: emulated targets (armv7 under qemu-user in the release workflow) start slowly.
 ready=""
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     if curl -fsS -o /dev/null "$base/api/health" 2>/dev/null; then
         ready=1
         break

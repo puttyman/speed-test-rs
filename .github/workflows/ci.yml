@@ -22,6 +22,10 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: short
   CARGO_LEPTOS_VERSION: "0.3.11"
+  # Zig is the C compiler/linker for the static musl builds (cargo-zigbuild); it also builds
+  # the bundled C code (SQLite, and aws-lc for str0m's DTLS). Versions verified together.
+  ZIG_VERSION: "0.17.0"
+  CARGO_ZIGBUILD_VERSION: "0.23.4"
   LEPTOS_OUTPUT_NAME: speed-test-rs
 
 jobs:
@@ -135,9 +139,11 @@ jobs:
         with:
           key: ${{ env.TARGET }}
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
-          tool: cargo-zigbuild
+          tool: cargo-zigbuild@${{ env.CARGO_ZIGBUILD_VERSION }}
       - name: Install cargo-leptos
         run: |
           curl -fsSL "https://github.com/leptos-rs/cargo-leptos/releases/download/v${CARGO_LEPTOS_VERSION}/cargo-leptos-x86_64-unknown-linux-gnu.tar.gz" \

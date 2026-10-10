@@ -22,6 +22,10 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   CARGO_LEPTOS_VERSION: "0.3.11"
+  # Zig is the C compiler/linker for the static musl builds (cargo-zigbuild); it also builds
+  # the bundled C code (SQLite, and aws-lc for str0m's DTLS). Versions verified together.
+  ZIG_VERSION: "0.17.0"
+  CARGO_ZIGBUILD_VERSION: "0.23.4"
   LEPTOS_OUTPUT_NAME: speed-test-rs
 
 jobs:
@@ -59,6 +63,12 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # C code in the build: SQLite (bundled) and aws-lc (str0m's DTLS, via aws-lc-sys's
+      # cc builder; no cmake, NASM or bindgen needed for these targets):
+      # - Linux musl: cargo-zigbuild, with Zig as the C cross compiler and linker.
+      # - macOS: the runner's Xcode clang (x86_64 is cross-compiled with `-arch x86_64`).
+      # - Windows: MSVC from the runner image; aws-lc uses its bundled pre-assembled NASM
+      #   objects (str0m-aws-lc-rs enables aws-lc-rs's `prebuilt-nasm`), so no NASM install.
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
@@ -71,9 +81,11 @@ jobs:
             zigbuild: true
             smoke: true
           - target: armv7-unknown-linux-musleabihf
+            # Smoke-tested under qemu-user (binfmt), which is slow but enough for the checks.
             os: ubuntu-latest
             zigbuild: true
-            smoke: false
+            smoke: true
+            qemu: true
           - target: aarch64-apple-darwin
             os: macos-latest
             zigbuild: false
@@ -108,11 +120,13 @@ jobs:
       - name: Install zig
         if: matrix.zigbuild
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - name: Install cargo-zigbuild
         if: matrix.zigbuild
         uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
-          tool: cargo-zigbuild
+          tool: cargo-zigbuild@${{ env.CARGO_ZIGBUILD_VERSION }}
       - name: Download site
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -129,6 +143,11 @@ jobs:
           if [ "${RUNNER_OS}" = "Windows" ]; then exe=speed-test-rs.exe; fi
           echo "EXE=$exe" >> "$GITHUB_ENV"
           echo "BIN=target/$TARGET/release/$exe" >> "$GITHUB_ENV"
+      - name: Install QEMU user emulation
+        if: matrix.qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
       - name: Smoke test
         if: matrix.smoke
         run: bash scripts/smoke-binary.sh "$BIN"

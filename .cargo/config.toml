@@ -4,3 +4,14 @@
 # this makes a plain `cargo build --features ssr,embed-assets` (docs/SPEC.md §10.1)
 # produce the same server.
 LEPTOS_OUTPUT_NAME = "speed-test-rs"
+
+[build]
+# Leptos "erased components" mode, for every build (server and WASM, dev and release).
+# It shrinks the WASM bundle by ~17% (Brotli) and speeds up compiles. Server and front end
+# MUST agree on it, or hydration panics in the browser: cargo-leptos turns it on for its
+# own builds (`always-erase-components` in Cargo.toml), and this covers the plain
+# `cargo build`/`cargo zigbuild` of the embed-assets server (SPEC §10.1).
+#
+# NOTE: a RUSTFLAGS environment variable replaces this setting. If you set RUSTFLAGS, add
+# `--cfg erase_components` to it; the embed-assets build.rs refuses to build without it.
+rustflags = ["--cfg", "erase_components"]
