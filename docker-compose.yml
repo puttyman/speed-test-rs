@@ -1,8 +1,60 @@
+# speed-test-rs with Docker Compose. Pick ONE variant with a profile:
+#
+#   docker compose --profile host up -d     # host networking (Linux only, recommended)
+#   docker compose --profile bridge up -d   # bridge networking (Docker Desktop, macOS, Windows)
+#
+# Which one?
+# - host:   the container shares the host's network stack. WebRTC packet-loss tests see the
+#           real LAN address, there is no NAT or userland proxy in the data path, so
+#           multi-gigabit tests are not capped by Docker. Only works on Linux hosts.
+# - bridge: ports are published through Docker's NAT. Works everywhere, but you must set
+#           SPEEDTEST_PUBLIC_IP to the host's LAN IP so browsers can reach the WebRTC UDP port,
+#           and the userland proxy can cap throughput on slow hosts (e.g. a Raspberry Pi).
+#
+# Both variants keep history in the named volume `speedtest-data` (mounted at /data), so
+# switching variants keeps your results. Run only one at a time (they use the same ports).
+#
+# `image` pulls the published release; `docker compose build` builds it locally instead.
+
+name: speed-test-rs
+
+x-speed-test: &speed-test
+  image: ghcr.io/puttyman/speed-test-rs:latest
+  build: .
+  restart: unless-stopped
+  volumes:
+    - speedtest-data:/data
+  environment: &env
+    SPEEDTEST_DATA_DIR: /data
+    RUST_LOG: info
+    # SPEEDTEST_SERVER_NAME: living-room-nas
+    # SPEEDTEST_AUTH_TOKEN: change-me   # required before exposing beyond a trusted LAN
+
 services:
-  speed-test:
-    build: .
-    image: speed-test-rs:latest
+  speed-test-host:
+    <<: *speed-test
+    profiles: [host]
     container_name: speed-test-rs
-    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *env
+      # Listens on all host interfaces: http://<host-lan-ip>:8080
+      SPEEDTEST_LISTEN: 0.0.0.0:8080
+      SPEEDTEST_UDP_PORT: "3478"
+
+  speed-test-bridge:
+    <<: *speed-test
+    profiles: [bridge]
+    container_name: speed-test-rs
     ports:
-      - "8080:8080"
+      - "8080:8080/tcp"
+      - "3478:3478/udp"
+    environment:
+      <<: *env
+      SPEEDTEST_LISTEN: 0.0.0.0:8080
+      SPEEDTEST_UDP_PORT: "3478"
+      # The host's LAN IP, advertised in WebRTC ICE candidates. Change this!
+      SPEEDTEST_PUBLIC_IP: 192.168.1.10
+
+volumes:
+  speedtest-data:

@@ -13,6 +13,22 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                // PWA (SPEC §7.9): manifest, icons, iOS standalone metas, SW registration
+                <link rel="manifest" href="/manifest.webmanifest"/>
+                <meta
+                    name="theme-color"
+                    content="#ffffff"
+                    media="(prefers-color-scheme: light)"
+                />
+                <meta name="theme-color" content="#171d26" media="(prefers-color-scheme: dark)"/>
+                <link rel="icon" href="/favicon.ico" sizes="32x32"/>
+                <link rel="icon" href="/favicon.svg" type="image/svg+xml"/>
+                <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"/>
+                <meta name="apple-mobile-web-app-capable" content="yes"/>
+                <meta name="mobile-web-app-capable" content="yes"/>
+                <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+                <meta name="apple-mobile-web-app-title" content="Speed test"/>
+                <script src="/pwa.js" defer></script>
                 <AutoReload options=options.clone()/>
                 <HydrationScripts options/>
                 <MetaTags/>

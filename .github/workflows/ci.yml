@@ -1,0 +1,154 @@
+# CI for pull requests and main (SPEC §10.1, §12).
+#
+# The Rust toolchain comes from rust-toolchain.toml (rustup is preinstalled on GitHub-hosted
+# runners). Third-party actions are pinned to full commit SHAs; Dependabot keeps them fresh.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+  CARGO_LEPTOS_VERSION: "0.3.11"
+  LEPTOS_OUTPUT_NAME: speed-test-rs
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install cargo-leptos
+        run: |
+          curl -fsSL "https://github.com/leptos-rs/cargo-leptos/releases/download/v${CARGO_LEPTOS_VERSION}/cargo-leptos-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz --strip-components=1 -C "$HOME/.cargo/bin" cargo-leptos-x86_64-unknown-linux-gnu/cargo-leptos
+          cargo leptos --version
+      - name: clippy (ssr)
+        run: cargo clippy --locked --no-default-features --features ssr --all-targets -- -D warnings
+      - name: clippy (hydrate, wasm32)
+        run: cargo clippy --locked --lib --target wasm32-unknown-unknown --no-default-features --features hydrate -- -D warnings
+      # embed-assets compiles target/site into the binary, so the site must exist first.
+      - name: Build site (front end only)
+        run: cargo leptos build --frontend-only
+      - name: clippy (ssr,embed-assets)
+        run: cargo clippy --locked --no-default-features --features ssr,embed-assets --all-targets -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --locked --no-default-features --features ssr
+
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: end2end/package-lock.json
+      - name: Install cargo-leptos
+        run: |
+          curl -fsSL "https://github.com/leptos-rs/cargo-leptos/releases/download/v${CARGO_LEPTOS_VERSION}/cargo-leptos-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz --strip-components=1 -C "$HOME/.cargo/bin" cargo-leptos-x86_64-unknown-linux-gnu/cargo-leptos
+          cargo leptos --version
+      - name: Install Playwright and browsers
+        working-directory: end2end
+        # end2end/playwright.config.ts defines chromium, firefox and webkit projects, and
+        # `cargo leptos end-to-end` runs them all, so all three browsers are installed.
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: cargo leptos end-to-end
+        run: cargo leptos end-to-end
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            end2end/playwright-report
+            end2end/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+  dist:
+    name: dist (x86_64-unknown-linux-musl) + smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ env.TARGET }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-zigbuild
+      - name: Install cargo-leptos
+        run: |
+          curl -fsSL "https://github.com/leptos-rs/cargo-leptos/releases/download/v${CARGO_LEPTOS_VERSION}/cargo-leptos-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz --strip-components=1 -C "$HOME/.cargo/bin" cargo-leptos-x86_64-unknown-linux-gnu/cargo-leptos
+          cargo leptos --version
+      # Two-step build (SPEC §10.1): front end once, then the server with the site embedded.
+      - name: Build site
+        run: cargo leptos build --release --frontend-only
+      - name: Build server with embedded assets
+        run: cargo zigbuild --locked --release --no-default-features --features ssr,embed-assets --target "$TARGET"
+      - name: Smoke test
+        run: bash scripts/smoke-binary.sh "target/$TARGET/release/speed-test-rs"
+      - name: Binary size
+        run: ls -lh "target/$TARGET/release/speed-test-rs"
