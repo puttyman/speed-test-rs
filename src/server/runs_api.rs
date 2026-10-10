@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::{BytesRejection, QueryRejection};
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, RawQuery, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -512,10 +512,27 @@ pub struct CompareQuery {
 /// `GET /api/compare?labels=a,b` or `?ids=…` (2–4 items) → `CompareResult`.
 async fn compare(
     State(state): State<AppState>,
+    RawQuery(raw): RawQuery,
     query: Result<Query<CompareQuery>, QueryRejection>,
 ) -> ApiResult<Response> {
     let storage = storage(&state)?;
     let Query(query) = query?;
+    // Split `labels` on literal commas *before* percent-decoding, so a label that contains
+    // a comma can be passed encoded as `%2C`.
+    if let Some(labels) = raw.as_deref().and_then(raw_labels) {
+        let exclude = parse_bool(&query.exclude_overlapped, "exclude_overlapped")?;
+        if query
+            .ids
+            .as_deref()
+            .is_some_and(|ids| !ids.trim().is_empty())
+        {
+            return Err(ApiError::bad_request(
+                "pass either labels=a,b or ids=x,y (2 to 4 items)",
+            ));
+        }
+        let target = CompareTarget::Labels(labels);
+        return Ok(Json(storage.compare(&target, exclude).await?).into_response());
+    }
     let split = |v: &str| -> Vec<String> {
         v.split(',')
             .map(str::trim)
@@ -541,6 +558,25 @@ async fn compare(
     Ok(Json(storage.compare(&target, exclude).await?).into_response())
 }
 
+/// The `labels` parameter of a raw query string, split on unencoded commas and then
+/// form-decoded; `None` when absent or empty.
+fn raw_labels(raw: &str) -> Option<Vec<String>> {
+    let value = raw
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("labels="))?;
+    let labels: Vec<String> = value
+        .split(',')
+        .map(|part| {
+            form_urlencoded::parse(format!("v={part}").as_bytes())
+                .next()
+                .map(|(_, v)| v.trim().to_owned())
+                .unwrap_or_default()
+        })
+        .filter(|label| !label.is_empty())
+        .collect();
+    (!labels.is_empty()).then_some(labels)
+}
+
 /// `GET /api/groups/{id}` → `GroupRecord`.
 async fn get_group(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Response> {
     let storage = storage(&state)?;
@@ -558,6 +594,16 @@ mod tests {
     use axum::http::Request;
     use http_body_util::BodyExt;
     use serde_json::Value;
+
+    #[test]
+    fn raw_labels_split_on_unencoded_commas_only() {
+        assert_eq!(
+            raw_labels("labels=Office%2C%20desk,Bedroom+AP&exclude_overlapped=true"),
+            Some(vec!["Office, desk".to_owned(), "Bedroom AP".to_owned()])
+        );
+        assert_eq!(raw_labels("ids=a,b"), None);
+        assert_eq!(raw_labels("labels="), None);
+    }
     use tower::ServiceExt;
 
     struct TestApp {
