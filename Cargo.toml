@@ -169,6 +169,15 @@ ssr = [
 #   cargo build --release --no-default-features --features ssr,embed-assets
 embed-assets = ["ssr", "dep:rust-embed", "dep:brotli", "dep:flate2"]
 
+# Lean dev builds: line tables (file:line in backtraces) for this crate, no debug info for
+# dependencies. Full debug info for the large Leptos view types otherwise needs several GB
+# of temporary files per build.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]
 inherits = "release"

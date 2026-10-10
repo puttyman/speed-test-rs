@@ -57,16 +57,20 @@ for (const transport of ["websocket", "http"]) {
     const info = await (await request.get(`${BASE}/api/info`)).json();
     if (info.history) {
       await expect(page.locator(".save-notice .saved")).toBeVisible({ timeout: 10_000 });
-      const runs = await (await request.get(`${BASE}/api/runs?limit=1`)).json();
-      expect(runs.runs[0].label).toBe(label);
-      expect(runs.runs[0].transport).toBe(transport);
+      // Tests run in parallel, so find this test's run rather than taking the newest one.
+      const page1 = await (await request.get(`${BASE}/api/runs?limit=20`)).json();
+      const saved = page1.runs.find(
+        (r: { transport: string; label: string | null }) =>
+          r.transport === transport && r.label === label,
+      );
+      expect(saved).toBeTruthy();
 
       // Inline rename.
       await page.locator(".save-notice .link-button").click();
       await page.locator("#rename-input").fill(`Renamed ${transport}`);
       await page.locator("#rename-input").press("Enter");
       await expect(page.locator(".save-notice .saved")).toContainText(`Renamed ${transport}`);
-      const run = await (await request.get(`${BASE}/api/runs/${runs.runs[0].id}`)).json();
+      const run = await (await request.get(`${BASE}/api/runs/${saved.id}`)).json();
       expect(run.label).toBe(`Renamed ${transport}`);
     }
     expect(errors).toEqual([]);
