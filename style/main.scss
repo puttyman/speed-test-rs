@@ -312,3 +312,46 @@ a {
 	color: var(--color-text-muted);
 	margin: 0;
 }
+
+// Test controls (minimal engine wiring) -------------------------------------
+
+.phase-label {
+	min-height: 1.5em;
+	margin: var(--space-2) 0 0;
+	color: var(--color-text-muted);
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+}
+
+.test-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-3);
+	margin-top: var(--space-8);
+
+	.start-button {
+		margin-top: 0;
+	}
+}
+
+.test-options {
+	display: flex;
+	gap: var(--space-2);
+}
+
+.test-select {
+	min-height: 40px;
+	padding: 0 var(--space-3);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-surface);
+	color: var(--color-text);
+	font: 500 var(--text-sm) / 1.5 var(--font-body);
+	cursor: pointer;
+
+	&:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+}
