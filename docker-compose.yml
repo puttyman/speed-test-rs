@@ -1,7 +1,9 @@
-# speed-test-rs with Docker Compose. Pick ONE variant with a profile:
+# speed-test-rs with Docker Compose. Two variants:
 #
-#   docker compose --profile host up -d     # host networking (Linux only, recommended)
-#   docker compose --profile bridge up -d   # bridge networking (Docker Desktop, macOS, Windows)
+#   SPEEDTEST_PUBLIC_IP=192.168.1.10 docker compose up -d     # bridge networking (default; works everywhere)
+#   docker compose --profile host up -d speed-test-host       # host networking (Linux only, best for multi-gig)
+#
+# (Or put SPEEDTEST_PUBLIC_IP=<host LAN IP> in a .env file next to this one.)
 #
 # Which one?
 # - host:   the container shares the host's network stack. WebRTC packet-loss tests see the
@@ -42,9 +44,8 @@ services:
       SPEEDTEST_LISTEN: 0.0.0.0:8080
       SPEEDTEST_UDP_PORT: "3478"
 
-  speed-test-bridge:
+  speed-test:
     <<: *speed-test
-    profiles: [bridge]
     container_name: speed-test-rs
     ports:
       - "8080:8080/tcp"
@@ -53,8 +54,9 @@ services:
       <<: *env
       SPEEDTEST_LISTEN: 0.0.0.0:8080
       SPEEDTEST_UDP_PORT: "3478"
-      # The host's LAN IP, advertised in WebRTC ICE candidates. Change this!
-      SPEEDTEST_PUBLIC_IP: 192.168.1.10
+      # The host's LAN IP, advertised in WebRTC ICE candidates (packet-loss test).
+      # Without it, packet loss shows as unavailable; everything else still works.
+      SPEEDTEST_PUBLIC_IP: ${SPEEDTEST_PUBLIC_IP:-}
 
 volumes:
   speedtest-data:

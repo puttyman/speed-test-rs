@@ -39,11 +39,14 @@ the binary, so nothing else is needed:
 ### Docker
 
 ```bash
-docker compose up -d --build
-# or
-docker build -t speed-test-rs .
-docker run -d -p 8080:8080 --name speed-test speed-test-rs
+# Bridge networking (works everywhere). Set your server's LAN IP for the packet-loss test.
+SPEEDTEST_PUBLIC_IP=192.168.1.10 docker compose up -d --build
+
+# Host networking (Linux only; best for multi-gigabit tests)
+docker compose --profile host up -d --build speed-test-host
 ```
+
+See `docker-compose.yml` for when to use which.
 
 Then open `http://<server-ip>:8080`.
 
