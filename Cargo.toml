@@ -90,6 +90,7 @@ axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional
 async-trait = { version = "0.1.92", optional = true }
 bytes = { version = "1.12", optional = true }
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"], optional = true }
+form_urlencoded = { version = "1.2.2", optional = true }
 rand = { version = "0.10", optional = true }
 clap = { version = "4.6", features = ["derive"], optional = true }
 directories = { version = "6", optional = true }
@@ -141,6 +142,7 @@ ssr = [
     "dep:async-trait",
     "dep:bytes",
     "dep:futures-util",
+    "dep:form_urlencoded",
     "dep:rand",
     "dep:clap",
     "dep:directories",
