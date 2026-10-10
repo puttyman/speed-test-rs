@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v0.1 |
-| **Last updated** | 2026-10-10 (v0.2: standalone binary distribution) |
+| **Last updated** | 2026-10-10 (v0.3: Unloan-inspired design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
 | **Stack** | Rust · Leptos 0.8 (SSR + hydration/WASM) · Axum 0.8 · Tokio · WebSocket · WebRTC (str0m) · SQLite |
 | **License** | MIT OR Apache-2.0 |
 
@@ -30,24 +30,27 @@ UDP **WebRTC data channel** served by the app itself, so no external TURN server
 
 ### 2.1 Goals
 
-1. **Look and feel close to speed.cloudflare.com**: a big headline number, metric tiles, a
-   network quality score, detailed per-phase charts, and live updates while the test runs.
+1. **Sleek, modern and animated**: Cloudflare's information layout (headline number, metric
+   tiles, quality score, per-phase charts) in an **Unloan-inspired visual style** (color,
+   fonts, look and feel), with purposeful motion that shows the test as it runs (§7).
 2. **Accurate at LAN speeds**: correct from about 1 Mbps up to at least 2.5 Gbps on one
    stream, and up to 10 Gbps with parallel streams on capable hardware.
 3. **WebSocket-first measurement**: latency, download, upload and loaded latency all run over
    WebSocket.
 4. **True packet loss** over UDP via a WebRTC data channel (unreliable and unordered).
-5. **History and comparison**: runs are saved in SQLite, each with an optional label
-   (e.g. "Office – AP-2 – 5 GHz"). A history page lists runs and compares them side by side.
-6. **One-command deploy, two ways**:
+5. **History and comparison with zero effort**: every run is saved automatically with a
+   **prefilled label** (e.g. "Office – AP-2 – 5 GHz"), which is easy to change. History
+   groups runs by label, and compare shows labels or runs side by side (§7.7).
+6. **Installable** as a PWA on phones and desktops (§7.9).
+7. **One-command deploy, two ways**:
    - **Standalone binary**: one executable per platform with the Leptos UI (HTML shell, WASM,
      JS, CSS, icons) embedded. `./speed-test-rs` starts the server and serves the UI, with no
      `site/` folder, runtime, or installer needed. Builds for Linux (x86_64, aarch64, armv7),
      macOS (Intel, Apple Silicon) and Windows (x86_64). See §10.1.
    - **Docker**: `docker run -p 8080:8080 -p 3478:3478/udp ghcr.io/…/speed-test-rs`. The image
      wraps the same Linux binary and targets amd64 and arm64 (Raspberry Pi, NAS boxes).
-7. **Private by default**: no telemetry and no external calls. All assets are served locally.
-8. **Open source and easy to contribute to**: clear module boundaries, tests, CI.
+8. **Private by default**: no telemetry and no external calls. All assets are served locally.
+9. **Open source and easy to contribute to**: clear module boundaries, tests, CI.
 
 ### 2.2 Non-goals (v1)
 
@@ -233,7 +236,7 @@ The **data WebSocket** carries one request at a time:
 6. **Packet loss** = `lost / sent`. The result records `{sent, received, lost, ratio}`.
 7. All WebRTC traffic uses **one UDP port** (default **3478/udp**, configurable). The server
    advertises the host IP from `SPEEDTEST_PUBLIC_IP`, or auto-detects it if unset. Under
-   Docker bridge networking this variable must be set to the host's LAN IP (§10.2).
+   Docker bridge networking this variable must be set to the host's LAN IP (§10.3).
 8. If WebRTC fails (UDP blocked, ICE timeout of 5 s), packet loss is reported as
    **unavailable**, not 0%. The scores then treat packet loss as 0 points, as Cloudflare does.
 
@@ -337,11 +340,12 @@ enum ServerMsg {
 | `GET /api/__down?bytes=N` | HTTP-mode download (§5.8) |
 | `POST /api/__up` | HTTP-mode upload (§5.8) |
 | `POST /api/runs` | Save a completed run (body: `RunResult`). Returns `{id}`. |
-| `GET /api/runs?label=&from=&to=&limit=&cursor=` | List runs, newest first, cursor-paginated |
+| `GET /api/runs?label=&device=&from=&to=&limit=&cursor=` | List runs, newest first, cursor-paginated |
 | `GET /api/runs/{id}` | Full run, including raw points |
 | `PATCH /api/runs/{id}` | Update the label or notes |
 | `DELETE /api/runs/{id}` | Delete a run |
-| `GET /api/labels` | Distinct labels with run counts and the latest run per label |
+| `GET /api/labels?device=` | Distinct labels with run counts, last-used time and the median of the last 5 runs. Ordered by last use, which feeds the label chips (§7.7). |
+| `GET /api/compare?labels=a,b` or `?ids=…` | Data for the compare view: per-label medians or individual runs |
 | `GET /api/runs/export?format=csv\|json` | Export history |
 
 Leptos server functions can wrap the run endpoints for the UI, but the REST shape above is the
@@ -353,7 +357,8 @@ public contract, so scripts can use it too.
 RunResult {
   id, created_at, label?, notes?,
   transport: "websocket" | "http", profile, streams,
-  client: { ip, user_agent, device_hint? },
+  client: { ip, user_agent, device_id, device_name },
+  tls: bool,
   summary: {
     download_bps?, upload_bps?,
     latency_ms?, jitter_ms?,
@@ -376,57 +381,180 @@ RunResult {
 
 ## 7. UI / UX
 
-### 7.1 Visual language
+### 7.1 Design direction
 
-The look follows speed.cloudflare.com without copying its branding: no Cloudflare logo, name,
-or trade dress.
+Three sources, each used for a different thing:
 
-- Light, airy layout with white cards on a light grey page, and a dark theme through
-  `prefers-color-scheme` (plus a manual toggle).
-- **Hero**: a large thin-weight headline number (current or final download, Mbps) and a
-  **Start / Stop / Retest** pill button in the accent color.
-- **Metric tiles**: Download, Upload, Latency, Jitter, Packet loss. Each has a colored top
-  rule and a large tabular-nums value with its unit. Each tile updates live while its phase runs.
-- **Network quality score** card with Video streaming, Online gaming and Video chatting, each
-  showing a colored badge (bad / poor / average / good / great).
-- **Server / connection** card with server name, version, client IP, transport, streams and profile.
-- **Detail section** under the hero, one card per metric:
-  - Latency: box plot of idle, download-loaded and upload-loaded RTTs, with jitter values.
-  - Download / Upload: a dot plot of every sample per payload size (100 kB … 1 GB), with the
-    p90 line. Same idea as Cloudflare's per-size measurement chart.
-  - Packet loss: sent / received / lost, as a bar.
-- **Live progress**: a thin progress bar under the header, a phase label ("Measuring upload,
-  10 MB × 4"), and a sparkline of instantaneous throughput in the hero.
-- **Label prompt**: after a run, an inline "Where are you testing from?" field (autocompletes
-  previous labels), with a Save button.
-
-Design tokens (`style/main.scss`):
-
-| Token | Light | Use |
+| Aspect | Source | What it means |
 |---|---|---|
-| `--accent` | `#f6821f` | Start button, highlights |
-| `--download` | `#7b5cd6` | Download series |
-| `--upload` | `#e8478b` | Upload series |
-| `--latency` | `#2c7cb0` | Latency series |
-| `--great … --bad` | green → red ramp | Quality badges |
+| **Information layout** | speed.cloudflare.com | Big headline number, metric tiles, quality scores, detailed per-phase charts |
+| **Visual style**: color, typography, shape, look and feel | **Unloan** (unloan.com.au), as inspiration | Palette, type scale and weights, corner radii, spacing rhythm, surface and depth treatment, button and card style |
+| **Language and copywriting** | **Our own** (§7.5). Unloan's copy and tone are *not* used. | Short, plain, technical-friendly |
 
-### 7.2 Pages
+**Inspired by, not copied.** Unloan is a CommBank brand. The project does not use its name,
+logo, illustrations or proprietary font files, and nothing in the UI suggests a connection to
+it. Where Unloan uses a licensed typeface, we use the closest open-licensed equivalent
+(OFL / Apache), **self-hosted** inside the binary (§2.1 goal 8: no external requests).
+
+Goal: **sleek, modern, calm**. Generous whitespace, confident type, few colors used
+deliberately, and motion that explains what the test is doing rather than decorating it.
+
+### 7.2 Design tokens
+
+All visual decisions live in `style/tokens.scss` as CSS custom properties on `:root`. Dark
+values are set under `@media (prefers-color-scheme: dark)` and `[data-theme="dark"]` for the
+manual toggle. Components reference tokens only and never raw values.
+
+| Group | Tokens | Notes |
+|---|---|---|
+| Brand color | `--color-brand`, `--color-brand-strong`, `--color-brand-soft`, `--color-on-brand` | Taken from Unloan's primary and secondary colors |
+| Neutrals | `--color-bg`, `--color-surface`, `--color-surface-raised`, `--color-border`, `--color-text`, `--color-text-muted` | Light and dark sets |
+| Data series | `--series-download`, `--series-upload`, `--series-latency`, `--series-loss` | Derived from the brand palette. Must stay distinguishable for color-blind users and meet 3:1 against the surface. |
+| Status | `--status-great`, `--status-good`, `--status-average`, `--status-poor`, `--status-bad` | Quality badges and bufferbloat |
+| Typography | `--font-display`, `--font-body`, `--font-mono`; `--text-xs … --text-hero` (fluid `clamp()` scale); `--weight-*` | Display font for numbers and headings. Tabular numerals for all metrics. |
+| Shape | `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-pill` | Matches Unloan's corner language |
+| Space | `--space-1 … --space-10` (4 px base) | |
+| Depth | `--shadow-1`, `--shadow-2`, `--blur-glass` | Cards and the raised hero |
+| Motion | `--ease-out`, `--ease-spring`, `--dur-fast` (120 ms), `--dur-base` (240 ms), `--dur-slow` (480 ms) | §7.3 |
+
+**Capturing the values.** The concrete values are collected from the live site, either by
+running a small DevTools snippet on unloan.com.au that tallies computed colors, fonts and radii
+and dumps the `:root` custom properties, or from screenshots. They are then recorded in
+`docs/design/tokens.md` with the open font chosen for each role. Until then, the M0
+placeholder palette stays in place. *(Open question 1.)*
+
+### 7.3 Motion
+
+Motion shows the test's progress and direction. The rules:
+
+| Element | Behavior |
+|---|---|
+| **Packet flow** (signature visual) | A canvas behind the hero where particles stream **down** during download and **up** during upload, tinted with the series color. Particle speed and density follow live throughput on a log scale. During latency phases, single pulses travel out and back, one per probe. Idle state: a slow ambient drift. |
+| **Number count-up** | The hero number and tile values tween to each new value with a spring (`--ease-spring`, about 400 ms). They never jump. Tabular numerals keep the width stable. |
+| **Live throughput chart** | An area chart under the hero draws in real time (one point per completed sample plus interpolated live points). Payload-size changes are marked with thin ticks. |
+| **Phase timeline** | A stepper (Latency → Download → Upload → Packet loss) where the active step fills like a progress bar, completed steps get a check, and skipped steps are dimmed. |
+| **Result reveal** | When the run finishes, the tiles settle in turn (staggered 60 ms, translate and fade), the quality badges flip in, and the detail charts draw their lines. |
+| **Page transitions** | The View Transitions API is used for navigation between test, history, compare and run pages, with the hero number morphing into its history row. It does nothing in browsers without support. |
+| **Micro-interactions** | Button press scale, hover lift on cards, and a pulsing ring on the Start button while idle |
+
+**Performance rules.** The animation must never affect the measurement:
+- Only `transform` and `opacity` are animated in CSS. The packet-flow canvas runs on `requestAnimationFrame`.
+- The particle count is capped, scaled to device pixel ratio and hardware concurrency.
+- If frame time exceeds 20 ms for 1 s, the particles drop to a lightweight mode. They also pause while the tab is hidden.
+- Measurement code never waits on animation. Animation reads from a signal fed by the engine, never the other way round.
+
+**Reduced motion.** With `prefers-reduced-motion: reduce` (or the in-app toggle), particles are
+replaced by a static gradient, count-ups become crossfades, and view transitions are turned off.
+
+### 7.4 Layout and components
+
+- **Theme**: dark-first, with a light theme. Follows `prefers-color-scheme` by default, with a manual toggle.
+- **Hero**:
+  - a large display-weight headline number (current or final download speed) over the packet-flow canvas
+  - the phase timeline
+  - the **Start / Stop / Test again** pill button
+  - the label field (§7.7)
+- **Metric tiles**: Download, Upload, Latency, Jitter, Packet loss. Each tile has a series-color
+  accent, a large tabular value with its unit, and a small sparkline. Each tile updates live while its phase runs.
+- **Network quality** card: Video streaming, Online gaming and Video chatting, each with a
+  status badge that shows the class name as text.
+- **Server / connection** card: server name, version, client IP, transport, streams and profile.
+- **Detail section**, one card per metric:
+  - Latency: box plot of idle, download-loaded and upload-loaded RTTs, with jitter values.
+  - Download / Upload: a dot plot of every sample per payload size (100 kB … 1 GB), with the p90 line.
+  - Packet loss: sent / received / lost, as a bar.
+
+### 7.5 Voice and copy
+
+Our own voice, unrelated to Unloan's:
+- **Plain and short**: "Download", "Latency under load", "Test again". No marketing language,
+  puns or exclamation marks.
+- **Explain jargon once**: an ⓘ tooltip on each metric gives a one-sentence explanation
+  (e.g. "Jitter: how much latency varies between measurements").
+- Numbers carry the message. The copy only frames them.
+
+### 7.6 Units
+
+- A **units toggle** in the header switches between **Mbps** (default, as on Cloudflare) and **MB/s**.
+- Values auto-scale: ≥ 1000 Mbps shows as Gbps, ≥ 1000 MB/s as GB/s.
+- The choice is stored per device in `localStorage`. Results are always stored in bps, so the
+  toggle only changes how they are displayed (history, compare, exports, share cards included).
+
+### 7.7 Labels, history and compare
+
+**What labels are for.** A label records *where or what* a run measured: a room, an access
+point, a band or a cable (e.g. "Bedroom", "Office AP – 5 GHz", "Desk – wired"). History groups
+runs by label, so you can answer "which access point is best?" or "did moving the mesh node
+help?" by comparing labels instead of reading individual runs.
+
+**Easy by default: zero typing needed.**
+- **Every finished run is saved automatically** when history is on. There is no Save step.
+- The label field is **prefilled** before the test starts:
+  1. with the **last label used on this device** (stored in `localStorage`), so repeat tests in the same spot need no typing;
+  2. otherwise with a generated default, **`<device> · <date>`** (e.g. "iPhone · 10 Oct"). The device name comes from User-Agent Client Hints, falling back to User-Agent parsing.
+- To change it, tap the label. Recent labels appear as one-tap **chips** (from
+  `GET /api/labels`), with free-text entry for a new one. A label can be edited before the run
+  or afterwards, on the result screen or in history (`PATCH /api/runs/{id}`).
+- Each browser gets a random **device ID** (in `localStorage`) and a friendly **device name**,
+  so history can be filtered to "this device" and runs from different devices stay apart.
+
+**History** (`/history`):
+- Runs grouped by label (collapsible), newest first. Each group header shows the median of that
+  label's last 5 runs.
+- Filters: label, device, date range.
+- Inline label rename. Delete. Export (CSV / JSON).
+
+**Compare** (`/compare`):
+- Pick **2–4 runs or labels** from history. A label stands for the median of its last 5 runs.
+- Side-by-side tiles with **delta badges** against the first selection (e.g. "+23% ↑",
+  "−8 ms ↓"), using status colors for better and worse.
+- Overlaid charts (throughput dot plots, latency box plots) with one series color per selection.
+- The best value per metric is highlighted.
+- Shareable through the URL (`/compare?labels=Bedroom,Office` or `?ids=…`).
+
+### 7.8 Pages
 
 | Route | Content |
 |---|---|
-| `/` | Test page. The test does **not** auto-start, so users can set the label, transport and streams first. `?autostart=1` starts it on load. |
-| `/history` | Runs table: date, label, download, upload, latency, loss, scores. Filter by label or date. Multi-select to compare. |
-| `/compare?ids=a,b,c` | Side-by-side tiles plus overlaid charts. A per-label summary shows the median of that label's last N runs. |
+| `/` | Test page. The test does **not** auto-start, so users can check the label first. `?autostart=1` starts it on load. |
+| `/history` | §7.7 |
+| `/compare` | §7.7 |
 | `/runs/{id}` | A read-only result page with the same layout as the finished test page. Shareable. |
-| `/settings` (drawer) | Transport (WebSocket/HTTP), profile, parallel streams, units (Mbps/MB/s), theme |
+| Settings drawer | Transport (WebSocket/HTTP), profile, parallel streams, units, theme, reduced motion, device name |
 
-### 7.3 Accessibility and responsiveness
+### 7.9 Progressive Web App
 
-- Works at 360 px width with a 16 px gutter and no horizontal scroll. Tiles reflow to 2
-  columns, then 1.
+- `public/manifest.webmanifest`:
+  - `name`, `short_name`, `display: standalone`, `start_url: /`, and `theme_color` / `background_color` from the tokens
+  - icons at 192, 512 and maskable 512
+  - shortcuts: "Run test" (`/?autostart=1`) and "History"
+- `public/sw.js` service worker:
+  - **Caches the app shell**: hashed `/pkg/*` assets (cache-first, immutable), icons, fonts, and an offline page that says "Can't reach the speed-test server on this network".
+  - **Never caches or intercepts** `/api/*`, `/ws/*` or measurement traffic (network-only, bypassed early).
+  - When a new version is waiting, a toast reads "Update available, reload".
+- iOS: `apple-touch-icon` and the `apple-mobile-web-app-*` meta tags. Standalone mode respects safe-area insets.
+- **Secure context requirement.** Browsers only register service workers and offer "Install"
+  on **HTTPS** (or `localhost`). On plain `http://192.168.x.x`:
+  - the app works fully;
+  - the manifest still allows "Add to Home Screen" on some browsers;
+  - there is no offline shell or install prompt.
+
+  For the full PWA, serve over HTTPS with a certificate the phone trusts: the built-in TLS
+  listener (§9.2, `--tls-cert`/`--tls-key`, e.g. from `mkcert` or a home CA) or a reverse
+  proxy (Caddy, Traefik, Nginx Proxy Manager) with a real domain. The README covers both.
+  Self-signed certificates are not enough, because browsers refuse to register service workers
+  on pages with certificate errors.
+- **Measuring over HTTPS** encrypts everything (`wss://`), which costs CPU on slow hosts at
+  multi-gigabit speeds. The settings drawer shows the transport ("WebSocket · TLS"), and history
+  records it, so TLS and non-TLS runs aren't compared without noticing.
+
+### 7.10 Accessibility and responsiveness
+
+- Works at 360 px width with a 16 px gutter and no horizontal scroll. Tiles reflow to 2 columns, then 1.
 - Every chart has a text alternative (a values table in `<details>`).
-- Colors meet WCAG AA contrast, and badges also show the class name as text.
+- Text meets WCAG AA contrast. Badges and deltas also use text and arrows, not just color.
 - Live values are announced politely (`aria-live="polite"`), throttled to phase completion.
+- Full keyboard support, and visible focus rings in the brand color.
 
 ## 8. Storage
 
@@ -444,6 +572,9 @@ CREATE TABLE runs (
   streams       INTEGER NOT NULL,
   client_ip     TEXT,
   user_agent    TEXT,
+  device_id     TEXT,                      -- random per-browser ID (§7.7)
+  device_name   TEXT,
+  tls           INTEGER NOT NULL DEFAULT 0,
   download_bps  REAL, upload_bps REAL,
   latency_ms    REAL, jitter_ms  REAL,
   down_loaded_latency_ms REAL, up_loaded_latency_ms REAL,
@@ -454,6 +585,7 @@ CREATE TABLE runs (
 );
 CREATE INDEX runs_created_at ON runs(created_at DESC);
 CREATE INDEX runs_label      ON runs(label, created_at DESC);
+CREATE INDEX runs_device     ON runs(device_id, created_at DESC);
 ```
 
 - Summary columns are denormalized so the history and compare queries stay fast. The full
@@ -492,6 +624,8 @@ speed-test-rs --version | --help
 | `--max-bytes <N>` | `SPEEDTEST_MAX_BYTES` | `2000000000` | Per-request byte cap |
 | – | `SPEEDTEST_AUTH_TOKEN` | – | If set, the API, WebSocket and history require it (§11). Env only, so it doesn't show in `ps`. |
 | `--open` | – | off | Open the UI in the default browser after startup (desktop use) |
+| `--tls-listen <ADDR>` | `SPEEDTEST_TLS_LISTEN` | `0.0.0.0:8443`, `[::]:8443` when a cert is given | HTTPS/WSS listener, needed for the full PWA (§7.9). Runs alongside the plain HTTP listener. |
+| `--tls-cert <FILE>`, `--tls-key <FILE>` | `SPEEDTEST_TLS_CERT`, `SPEEDTEST_TLS_KEY` | – | PEM certificate and key (e.g. from `mkcert` or a home CA). TLS is off unless both are set. Uses `rustls`. |
 | `--site-root <DIR>` | `LEPTOS_SITE_ROOT` | embedded | Serve UI assets from disk instead of the embedded copy (development, theming) |
 | `--log <FILTER>` | `RUST_LOG` | `info` | Log filter (`tracing-subscriber`) |
 
@@ -567,9 +701,29 @@ Linux cross targets):
 | `x86_64-pc-windows-msvc` | Windows | `.exe` |
 
 Artifacts are named `speed-test-rs-<version>-<target>.tar.gz` (`.zip` on Windows), with a
-`SHA256SUMS` file, attached to the GitHub Release. `cargo-dist` is the preferred tool for
-generating the release workflow and an install script
-(`curl --proto '=https' -sSf https://…/install.sh | sh`). It is evaluated during M6.
+`SHA256SUMS` file, attached to the GitHub Release.
+
+**Release workflow: hand-written GitHub Actions** (*decided 2026-10-10*). It gives full
+control over the two-step Leptos build. `.github/workflows/release.yml` runs on tags `v*`:
+
+1. **`site`** (ubuntu): `cargo leptos build --release`, then uploads `target/site` as an artifact.
+2. **`binaries`**: a matrix over the targets above. Each job:
+   - downloads the `site` artifact into `target/site`;
+   - runs `cargo build --release --features ssr,embed-assets --target <triple>`. Linux musl
+     targets use `cargo-zigbuild` (or `cross`) on ubuntu, macOS uses `macos-latest` (arm64, with
+     the x86_64 target cross-compiled), and Windows uses `windows-latest`;
+   - runs the binary smoke test (§12) where the runner can execute the target;
+   - packages `tar.gz` / `zip` with README and licenses.
+3. **`docker`**: `docker buildx` builds `linux/amd64` and `linux/arm64` from the musl binaries
+   (`Dockerfile.release`) and pushes to GHCR with the version tag and `latest`.
+4. **`publish`**: generates `SHA256SUMS` and creates the GitHub Release with all archives and
+   notes generated from commits since the last tag.
+
+`.github/workflows/ci.yml` runs on every PR: fmt, clippy (`ssr`, `hydrate`,
+`ssr,embed-assets`), unit and integration tests, Playwright e2e, and a Linux `dist` build with
+the smoke test. Rust and cargo caches use `Swatinem/rust-cache`. Action versions are pinned by SHA.
+
+An `install.sh` (detects OS/arch, downloads the archive, verifies its checksum) may be added later.
 
 `cargo install speed-test-rs` is **not** supported in v1. The WASM front end needs
 `cargo-leptos` and a pre-build step that plain `cargo install` can't run. Prebuilt binaries
@@ -639,7 +793,7 @@ plainly: the test measures the slowest hop between the browser and the server.
 
 ## 11. Security and privacy
 
-- Designed for a **trusted LAN**. No auth by default.
+- Designed for a **trusted LAN**. No auth by default. Optional TLS (§9.2, §7.9) with a user-supplied certificate. The project never generates or installs CAs.
 - The server **listens on all interfaces by default** (§9.2). The startup log says so in
   one line (`listening on all interfaces (0.0.0.0:8080, [::]:8080); use --listen 127.0.0.1:8080 to restrict`).
   The README tells laptop users on untrusted networks (cafés, hotels) to restrict it or stop the
@@ -666,6 +820,9 @@ plainly: the test measures the slowest hop between the browser and the server.
 | Server integration | WebSocket download/upload correctness (byte counts, acks), limits and busy errors, HTTP `__down`/`__up`, run CRUD against a temp SQLite file | `cargo test --features ssr` with `tokio-tungstenite` as the client |
 | WebRTC | str0m echo against a headless Chromium data channel | Playwright |
 | End-to-end | Full `quick` profile in Chromium. Asserts all tiles populate, the run saves and appears in history. | `cargo leptos end-to-end` (Playwright) |
+| UI and motion | Visual regression screenshots (light, dark, 360 px, reduced motion). Checks that the animation stays off the measurement path: a `quick` run with particles on and off gives results within 5%. | Playwright |
+| PWA | Manifest is valid, service worker registers over HTTPS (mkcert certificate in CI), the app shell loads offline, and `/api` and `/ws` requests are never served from cache | Playwright |
+| Labels and history | First-run default label, last-label prefill, auto-save, chip selection, rename, compare deltas | Playwright + server integration |
 | Accuracy | Run behind `tc netem` / `tc tbf` in a test container (e.g. 100 Mbit, 20 ms delay, 1% loss) and assert results within ±10% | A CI job (Linux runner, privileged) or a manual script |
 | Binary smoke test | For each release target that can run on a CI runner (linux x86_64/arm64, macOS, Windows): copy the binary **alone** into an empty temp directory, start it, and check that `/`, `/api/health`, `/pkg/speed-test-rs.wasm` (`application/wasm`) and the CSS all return 200. Then run `healthcheck`. This catches missing embedded assets. | CI matrix |
 | Lint | `cargo fmt --check`, `cargo clippy -D warnings` for both feature sets (and `ssr,embed-assets`) | CI |
@@ -678,7 +835,9 @@ src/
   lib.rs               # hydrate entry
   app.rs               # router, shell, layout
   pages/               # test.rs, history.rs, compare.rs, run.rs
-  components/          # hero, metric_tile, quality_card, charts/{box_plot,dot_plot,sparkline}
+  components/          # hero, metric_tile, quality_card, phase_timeline, label_picker,
+                       #   units_toggle, charts/{box_plot,dot_plot,sparkline,live_area},
+                       #   motion/{packet_flow (canvas), count_up, reveal}
   engine/              # (hydrate) client measurement engine: ws.rs, http.rs, rtc.rs, runner.rs
   model/               # (shared) protocol.rs, result.rs, profile.rs, stats.rs, scores.rs
   server/              # (ssr) api.rs, ws.rs, http_measure.rs, rtc.rs, storage.rs,
@@ -687,7 +846,11 @@ build.rs               # checks target/site exists when `embed-assets` is on
 migrations/            # sqlx migrations
 contrib/               # systemd unit, launchd plist, Windows service notes
 xtask/ or justfile     # `dist`: two-step build (§10.1) for each target
-style/main.scss
+style/                 # tokens.scss, motion.scss, components/*.scss, main.scss
+public/                # manifest.webmanifest, sw.js, icons/, fonts/ (self-hosted, OFL)
+docs/design/tokens.md  # captured Unloan-inspired values + open font mapping
+.github/workflows/     # ci.yml, release.yml
+Dockerfile.release     # runtime image from prebuilt musl binaries
 end2end/               # Playwright tests
 docs/SPEC.md
 Dockerfile, docker-compose.yml
@@ -698,13 +861,14 @@ Dockerfile, docker-compose.yml
 | # | Milestone | Scope | Exit criteria |
 |---|---|---|---|
 | **M0** | **Modernize** *(done in this change)* | Upgrade Leptos 0.6 → 0.8 and Axum 0.7 → 0.8. Drop Thaw. Rename the crate `leptops-axum` → `speed-test-rs`. Fix the broken build. Commit `Cargo.lock`. Add `/api/health`, a Cloudflare-style placeholder layout, the Dockerfile, compose, and the license. | `cargo leptos build` succeeds. The page hydrates with no console errors. The Docker image builds and serves. |
-| M1 | WebSocket engine | `model::{protocol,stats,profile}`. `/ws/probe` and `/ws/data`. Client engine for idle latency, jitter, download and upload with ramp halting. Live tiles and progress. | The `quick` profile completes on localhost and over Wi-Fi with plausible numbers. Unit and integration tests pass. |
-| M2 | Loaded latency, scores, charts | Probe during load. AIM scores. Box plot, dot plot, sparkline. Detail section. Dark mode toggle. | Matches the Cloudflare SDK's result shape for the same inputs (scoring unit tests). |
+| M1 | WebSocket engine and design foundation | `model::{protocol,stats,profile}`. `/ws/probe` and `/ws/data`. Client engine for idle latency, jitter, download and upload with ramp halting. **Design tokens** (§7.2, Unloan-inspired values captured in `docs/design/tokens.md`), self-hosted open fonts, base components, live tiles with count-up, phase timeline, units toggle (§7.6). | The `quick` profile completes on localhost and over Wi-Fi with plausible numbers. Unit and integration tests pass. The UI uses tokens only (no raw colors in components). |
+| M2 | Loaded latency, scores, charts, motion | Probe during load. AIM scores. Box plot, dot plot, sparkline, live area chart. Detail section. **Motion system** (§7.3): packet-flow canvas, result reveal, micro-interactions, reduced-motion mode, performance guard. Dark and light theme toggle. | Scoring unit tests match the Cloudflare SDK. 60 fps on a mid-range phone. A `quick` run with animation on and off gives results within 5%. |
 | M3 | HTTP mode | `__down`/`__up`, the client HTTP engine, the transport toggle | WebSocket and HTTP results within 10% of each other on a wired LAN |
 | M4 | Packet loss (WebRTC) | str0m endpoint on a single UDP port, signalling over `/ws/control`, client DataChannel engine, a graceful "unavailable" state | netem 1% loss is measured as 1% ± 0.5%. Works with `--network host` and with bridge mode plus `SPEEDTEST_PUBLIC_IP`. |
-| M5 | History and compare | SQLite storage, run CRUD API, label prompt, `/history`, `/compare`, `/runs/{id}`, export, retention | Runs persist across container restarts (volume). Comparing 3 labelled runs works on mobile. |
+| M5 | History, labels and compare | SQLite storage, run CRUD API, **auto-save**, **prefilled labels** (last-used, or `<device> · <date>`), label chips, device ID and name, `/history` grouped by label, `/compare` with deltas, `/runs/{id}`, export, retention, view transitions | Runs persist across restarts. A first-time user can run, save and compare two rooms **without typing anything**. Comparing 3 labels works on mobile. |
 | M6 | Standalone binary | `embed-assets` feature with `rust-embed` and the asset handler (MIME types, compression, cache headers). `clap` CLI and §9 options. Platform data dirs. LAN URL and QR printout. `--open`. `dist` recipe. `contrib/` service files. Distroless Docker runtime. | The binary, copied **alone** into an empty directory on Linux, macOS and Windows, serves a fully hydrated, styled UI. The binary smoke test (§12) passes. |
-| M7 | Release | Release workflow (cargo-dist or hand-written) producing the §10.1 targets with `SHA256SUMS`. Multi-arch GHCR image built from the same binaries. CI (fmt, clippy, tests, e2e, smoke). README with screenshots and install instructions for both. CONTRIBUTING. v0.1.0 tag. | Downloading `speed-test-rs-0.1.0-<target>` from GitHub Releases and running it works. `docker run ghcr.io/puttyman/speed-test-rs:0.1.0` works on amd64 and arm64. |
+| M7 | PWA and HTTPS | Manifest, icons, service worker (app shell only, never `/api` or `/ws`), update toast, iOS meta tags. Optional `rustls` TLS listener (`--tls-*`). README guides for mkcert and reverse proxies. | Installs on Android Chrome and desktop Chrome/Edge over HTTPS. Adds to the iOS home screen. The offline shell shows the friendly offline page. |
+| M8 | Release | Hand-written GitHub Actions `release.yml` (§10.1) producing all targets with `SHA256SUMS` and a multi-arch GHCR image from the same binaries. `ci.yml` (fmt, clippy, tests, e2e, smoke). README with screenshots and install instructions for both. CONTRIBUTING. v0.1.0 tag. | Pushing tag `v0.1.0` publishes a GitHub Release whose binaries run on every target, and `docker run ghcr.io/puttyman/speed-test-rs:0.1.0` works on amd64 and arm64. |
 
 ## 15. Future ideas (post-v1)
 
@@ -714,20 +878,36 @@ Dockerfile, docker-compose.yml
 - Wi-Fi metadata hints (SSID, band) where the browser or OS exposes them, or entered manually.
 - An optional public "internet mode" that points the engine at another speed-test-rs instance.
 - Peer-to-peer testing between two browsers through the server as a signalling relay.
+- **Floor-plan heatmap**: upload a floor plan and pin each label to a spot to get a Wi-Fi heatmap.
+- **Walk-test mode**: a light test repeats every few seconds while you walk, showing dead
+  zones and roaming hand-offs.
+- **Bufferbloat grade (A–F)** and **plain-language verdicts** ("Good for 4K on 2 TVs and a call").
+- **Shareable result card** (PNG) with a QR code.
+- **Home Assistant / MQTT** export and **alerts** when a label falls below its baseline.
+- **TV / kiosk mode** showing the latest result per label.
 - A "real-time load" phase: an unreliable WebRTC data channel sends at fixed target rates
   (e.g. 5 / 25 / 100 Mbps) and records loss and jitter at each rate, like `iperf3 -u`. It is
   a diagnostic for video calls and gaming, not a throughput measurement.
 
 ## 16. Open questions
 
-1. **Parallel streams default**: keep 1 (Cloudflare-like, reflects single-flow behavior), or
-   default to 4 on the `extended` profile only? *Current proposal: 1 for standard, 4 for extended.*
-2. **str0m vs webrtc-rs**: str0m is preferred for its single-socket, sans-IO design. Confirm
-   during M4 that str0m's SCTP handles 1000 small unreliable messages without head-of-line
-   effects.
-3. **Labels as free text or managed entities**: free text with autocomplete is proposed.
-   Managed "locations" (with icons and an AP model) could come later.
-4. **Units**: default to Mbps (like Cloudflare), with a toggle for MB/s?
-5. **Release tooling**: `cargo-dist` (generated workflow, installers, less to maintain) or a
-   hand-written GitHub Actions matrix (full control over the two-step leptos build)?
-   Confirm during M7 that cargo-dist can run the `cargo leptos build` pre-step.
+1. **Unloan-inspired token values** *(blocks M1 design work)*: the exact colors, typefaces,
+   radii and shadows still need to be captured from unloan.com.au (DevTools snippet or
+   screenshots, §7.2), and an open-licensed font chosen for each Unloan font.
+2. **Parallel streams default**: *proposal*: 1 stream for `standard` (Cloudflare-like,
+   reflects single-flow behavior), 4 for `extended`.
+3. **str0m vs webrtc-rs**: str0m is preferred. Confirm during M4 that its SCTP handles 1000
+   small unreliable messages without head-of-line effects. *(Technical, decided during M4.)*
+
+### Decided
+
+| Topic | Decision |
+|---|---|
+| Throughput transport | WebSocket, with HTTP as a cross-check. WebRTC is used only for packet loss. |
+| Bind address | All interfaces (`0.0.0.0` + `[::]`) by default |
+| Release tooling | Hand-written GitHub Actions (§10.1) |
+| Labels | Free text with chips, auto-saved and prefilled (§7.7) |
+| Units | Mbps by default, with a toggle for MB/s and auto-scaling to Gbps / GB/s (§7.6) |
+| Visual style | Unloan-inspired color, fonts and look and feel. Our own copy (§7.1, §7.5). |
+| Motion | Packet flow, count-up, live chart, phase timeline, result reveal, view transitions (§7.3) |
+| PWA | Yes. Full install and offline support over HTTPS (§7.9). |
