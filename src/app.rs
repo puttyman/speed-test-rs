@@ -49,13 +49,15 @@ pub fn App() -> impl IntoView {
 fn Header() -> impl IntoView {
     view! {
         <header class="site-header">
-            <a class="brand" href="/">
-                <span class="brand-mark" aria-hidden="true"></span>
-                "speed-test-rs"
-            </a>
-            <nav class="site-nav">
-                <a href="/">"Test"</a>
-            </nav>
+            <div class="inner">
+                <a class="brand" href="/">
+                    <span class="brand-mark" aria-hidden="true"></span>
+                    "speed-test-rs"
+                </a>
+                <nav class="site-nav">
+                    <a href="/" aria-current="page">"Test"</a>
+                </nav>
+            </div>
         </header>
     }
 }
