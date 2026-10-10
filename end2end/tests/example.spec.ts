@@ -1,10 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
-import { BASE, hydrated, runToCompletion } from "./helpers";
+import { BASE, hydrated, runToCompletion, watchErrors } from "./helpers";
 
 
 /** Selects the quick profile (stored per device) and reloads. */
 async function useQuickProfile(page: Page, transport = "websocket") {
   await page.goto(`${BASE}/`);
+  // Let the first load finish before reloading, so the WASM download isn't aborted.
+  await hydrated(page);
   await page.evaluate((t) => {
     localStorage.setItem("speedtest.profile", "quick");
     localStorage.setItem("speedtest.transport", t);
@@ -31,9 +33,7 @@ test("health endpoint reports ok", async ({ request }) => {
 for (const transport of ["websocket", "http"]) {
   test(`quick run over ${transport} completes and is saved`, async ({ page, request }) => {
     test.setTimeout(150_000);
-    const errors: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+    const errors = watchErrors(page);
 
     await useQuickProfile(page, transport);
     const label = (await page.locator(".label-text").textContent())!.trim();

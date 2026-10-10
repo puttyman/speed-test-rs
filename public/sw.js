@@ -93,24 +93,30 @@ async function cacheFirst(req) {
   const cache = await caches.open(ASSET_CACHE);
   const hit = await cache.match(req);
   if (hit) return hit;
-  const res = await fetch(req);
-  if (res.ok && res.type === "basic") {
-    cache.put(req, res.clone());
+  try {
+    const res = await fetch(req);
+    store(cache, req, res);
+    return res;
+  } catch {
+    // Offline, or the page navigated away and the browser aborted the request.
+    return Response.error();
   }
-  return res;
+}
+
+/** Caches a successful same-origin response; a failed write (aborted body, quota) is ignored. */
+function store(cache, req, res) {
+  if (res.ok && res.type === "basic") {
+    cache.put(req, res.clone()).catch(() => {});
+  }
 }
 
 async function networkFirst(req) {
   const cache = await caches.open(ASSET_CACHE);
   try {
     const res = await fetch(req);
-    if (res.ok && res.type === "basic") {
-      cache.put(req, res.clone());
-    }
+    store(cache, req, res);
     return res;
-  } catch (err) {
-    const hit = await cache.match(req);
-    if (hit) return hit;
-    throw err;
+  } catch {
+    return (await cache.match(req)) || Response.error();
   }
 }

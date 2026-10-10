@@ -38,8 +38,10 @@ const config: PlaywrightTestConfig = {
     /* Base URL to use in actions like `await page.goto('/')`. */
     // baseURL: 'http://localhost:3000',
 
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-    trace: "on-first-retry",
+    /* Screenshots of failures. No traces: they record every request, and these tests move
+       gigabytes of test data (a CI report reached 1.1 GB with traces on). */
+    screenshot: "only-on-failure",
+    trace: "off",
 
     /* Optional: use a preinstalled Chromium instead of Playwright's bundled build */
     launchOptions: process.env.PW_CHROMIUM_PATH

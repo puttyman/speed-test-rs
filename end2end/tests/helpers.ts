@@ -7,11 +7,25 @@ export function uid(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-/** Collects console errors and page errors. */
+/**
+ * Requests the browser cancels because the test reloaded or navigated while the previous
+ * page was still loading (e.g. the WASM bundle). Firefox and WebKit report these as errors;
+ * Chromium does not. They are not application errors.
+ */
+const NAVIGATION_ABORT = [/The operation was aborted/, /^AbortError/, /NS_BINDING_ABORTED/, /^(TypeError: )?Load failed$/];
+
+export function isNavigationAbort(message: string): boolean {
+  return NAVIGATION_ABORT.some((re) => re.test(message.trim()));
+}
+
+/** Collects console errors and page errors, except navigation aborts. */
 export function watchErrors(page: Page): string[] {
   const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  const push = (m: string) => {
+    if (!isNavigationAbort(m)) errors.push(m);
+  };
+  page.on("pageerror", (e) => push(e.message));
+  page.on("console", (m) => m.type() === "error" && push(m.text()));
   return errors;
 }
 
@@ -26,6 +40,8 @@ export async function setup(
   opts: { label?: string; name?: string; transport?: string; profile?: string } = {},
 ) {
   await page.goto(`${BASE}/`);
+  // Let the first load finish before reloading, so the WASM download isn't aborted.
+  await hydrated(page);
   await page.evaluate((o) => {
     localStorage.setItem("speedtest.profile", o.profile ?? "quick");
     localStorage.setItem("speedtest.transport", o.transport ?? "websocket");
