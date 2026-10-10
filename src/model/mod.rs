@@ -13,6 +13,7 @@
 //! - [`device`]: device detection from the User-Agent and default labels (§7.7)
 
 pub mod device;
+pub mod history;
 pub mod profile;
 pub mod protocol;
 pub mod result;
