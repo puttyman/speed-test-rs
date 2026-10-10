@@ -14,7 +14,8 @@
 //!
 //! Module layout: [`socket`] (WebSocket wrapper), [`ws_transport`] and
 //! [`http_transport`] (latency/download/upload), [`loaded_latency`],
-//! [`runner`] (profile execution). [`util`] holds the platform-free helpers.
+//! [`runner`] (profile execution), [`rtc`] (WebRTC packet loss probe).
+//! [`util`] holds the platform-free helpers.
 
 pub mod util;
 
@@ -24,6 +25,8 @@ pub mod http_transport;
 pub mod js;
 #[cfg(feature = "hydrate")]
 pub mod loaded_latency;
+#[cfg(feature = "hydrate")]
+pub mod rtc;
 #[cfg(feature = "hydrate")]
 pub mod runner;
 #[cfg(feature = "hydrate")]
@@ -177,6 +180,13 @@ mod api {
         pub fn is_aborted(&self) -> bool {
             self.abort.is_aborted()
         }
+    }
+
+    /// The WebRTC packet loss probe (SPEC §5.7), for `EngineOptions::packet_loss`:
+    /// `opts.packet_loss = engine::default_packet_loss_probe();`. Leaving it `None` marks
+    /// packet loss steps skipped.
+    pub fn default_packet_loss_probe() -> Option<Rc<dyn PacketLossProbe>> {
+        Some(super::rtc::packet_loss_probe())
     }
 
     /// Starts a run in the background (`spawn_local`).

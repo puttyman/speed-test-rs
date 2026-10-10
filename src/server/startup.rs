@@ -35,6 +35,8 @@ pub struct Bound<'a> {
     pub https: Vec<SocketAddr>,
     /// Where the UI assets come from (e.g. "embedded").
     pub assets: String,
+    /// The WebRTC endpoint (e.g. `udp/3478 on 192.168.1.10`); `None` if it failed to start.
+    pub rtc: Option<String>,
 }
 
 impl Bound<'_> {
@@ -67,6 +69,13 @@ impl Bound<'_> {
         };
         let _ = writeln!(out, "  data dir   {}{history}", config.data_dir.display());
         let _ = writeln!(out, "  assets     {}", self.assets);
+        let _ = writeln!(
+            out,
+            "  webrtc     {}",
+            self.rtc
+                .as_deref()
+                .unwrap_or("unavailable (packet loss is not measured)")
+        );
 
         let listening = join_addrs(&self.http);
         if config.listens_on_all_interfaces() {
