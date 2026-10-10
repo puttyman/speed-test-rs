@@ -7,6 +7,7 @@ use leptos::config::{Env, LeptosOptions, ReloadWSProtocol};
 
 use super::assets::Assets;
 use super::config::{Config, process_env};
+use super::storage::Storage;
 use super::ws::MeasureState;
 
 /// State shared by every handler (`State<AppState>`, or a sub-state through [`FromRef`]).
@@ -25,6 +26,9 @@ pub struct AppState {
     pub assets: Assets,
     /// Measurement runtime: session registry, payload buffer, limits, WebRTC hook.
     pub measure: MeasureState,
+    /// Run history; `None` when history is off (`--no-history`). Opened asynchronously by
+    /// `main` through [`Storage::from_config`](super::storage::Storage::from_config).
+    pub storage: Option<Storage>,
     // Future: `pub sessions: SessionRegistry`, `pub db: Option<SqlitePool>`, ...
 }
 
@@ -38,6 +42,7 @@ impl AppState {
             config: Arc::new(config),
             assets,
             measure,
+            storage: None,
         }
     }
 }

@@ -8,7 +8,7 @@ use axum::response::Response;
 use leptos_axum::{LeptosRoutes, generate_route_list};
 
 use super::state::AppState;
-use super::{api, assets, http_measure};
+use super::{api, assets, http_measure, runs_api};
 use crate::app::{App, shell};
 
 /// Builds the application router.
@@ -20,6 +20,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(api::routes())
         .merge(http_measure::routes())
+        .merge(runs_api::routes())
         .leptos_routes(&state, routes, {
             let options = state.leptos.clone();
             move || shell(options.clone())
