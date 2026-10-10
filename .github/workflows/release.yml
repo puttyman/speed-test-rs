@@ -1,5 +1,13 @@
-# Release pipeline (SPEC §10.1): site -> binaries -> docker -> publish.
+# Release pipeline (SPEC §10.1): prepare -> ci -> site -> binaries -> docker -> publish.
 #
+# Start it either way:
+# - push a tag `vX.Y.Z`, or
+# - Actions -> Release -> Run workflow, with version `X.Y.Z`: the tag `vX.Y.Z` is created on
+#   the selected branch's commit when the release is published.
+#
+# 0. prepare:  resolve the version and tag, check it matches Cargo.toml.
+# 0. ci:       the full CI suite (fmt, clippy, unit/integration tests, Playwright e2e in
+#              Chromium/Firefox/WebKit, musl build + smoke). Nothing is built if it fails.
 # 1. site:     build the WASM/JS/CSS front end once and upload target/site.
 # 2. binaries: build the server for every target with that site embedded (embed-assets),
 #              smoke-test where the runner can execute the binary, package the archive.
@@ -11,12 +19,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (must match Cargo.toml), e.g. 0.1.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -30,8 +44,54 @@ env:
   LEPTOS_OUTPUT_NAME: speed-test-rs
 
 jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$version' is not a version like 1.2.3 or 1.2.3-rc.1"; exit 1
+          fi
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$crate" != "$version" ]; then
+            echo "::error::Version $version does not match Cargo.toml ($crate). Bump Cargo.toml first."; exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::Tag v$version already exists."; exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version from $GITHUB_SHA (prerelease: $prerelease)"
+
+  ci:
+    name: CI
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
   site:
     name: Build site
+    needs: [prepare, ci]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,7 +119,7 @@ jobs:
 
   binaries:
     name: Build ${{ matrix.target }}
-    needs: site
+    needs: [prepare, site]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -109,8 +169,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Version from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Version
+        run: echo "VERSION=${{ needs.prepare.outputs.version }}" >> "$GITHUB_ENV"
       - name: Install toolchain (rust-toolchain.toml)
         run: |
           rustup toolchain install
@@ -173,7 +233,7 @@ jobs:
 
   docker:
     name: Docker image (Docker Hub, GHCR)
-    needs: binaries
+    needs: [prepare, binaries]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -187,8 +247,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Version from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Version
+        run: echo "VERSION=${{ needs.prepare.outputs.version }}" >> "$GITHUB_ENV"
       - name: Download musl archives
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -227,8 +287,9 @@ jobs:
             ghcr.io/${{ github.repository }}
             name=${{ env.DOCKERHUB_IMAGE }},enable=${{ env.DOCKERHUB_USERNAME != '' }}
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }},enable=${{ needs.prepare.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease == 'false' }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -240,7 +301,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [binaries, docker]
+    needs: [prepare, binaries, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -260,7 +321,11 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Creates the tag on this commit when the run was started by hand.
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: speed-test-rs ${{ needs.prepare.outputs.version }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           files: |
             release/*.tar.gz

@@ -54,10 +54,15 @@ Clippy runs with `-D warnings`. Without `just`, the commands are in the `justfil
 
 ## Releasing (maintainers)
 
-1. Update `version` in `Cargo.toml` (and `Cargo.lock`), commit.
-2. Tag `vX.Y.Z` and push the tag. `release.yml` builds every target, the Docker image
-   (`puttyman/speed-test-rs:X.Y.Z` on Docker Hub and `ghcr.io/puttyman/speed-test-rs`, plus `latest`) and the GitHub Release with
-   `SHA256SUMS`. Tags with a `-` (e.g. `v0.2.0-rc.1`) are published as pre-releases.
+1. Update `version` in `Cargo.toml` (and `Cargo.lock`), commit and push to `main`.
+2. Start the release: **Actions → Release → Run workflow** with the version (`X.Y.Z`), or push
+   a tag `vX.Y.Z`.
+3. `release.yml` first runs the whole CI suite (lint, unit and integration tests, Playwright
+   e2e in Chromium, Firefox and WebKit, musl smoke test). Only if it passes does it build every
+   target, the Docker image (`puttyman/speed-test-rs:X.Y.Z` on Docker Hub, when the
+   `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets are set, and `ghcr.io/puttyman/speed-test-rs`,
+   plus `X.Y` and `latest`) and the GitHub Release with `SHA256SUMS`, creating the tag if
+   needed. Versions with a `-` (e.g. `0.2.0-rc.1`) are published as pre-releases.
 
 ## License
 

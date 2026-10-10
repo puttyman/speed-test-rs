@@ -9,6 +9,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The release workflow runs the whole suite before it builds anything.
+  workflow_call:
 
 permissions:
   contents: read
