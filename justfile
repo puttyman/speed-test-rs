@@ -19,7 +19,8 @@ dev:
 build:
     cargo leptos build --release
 
-# Standalone binary with the UI embedded (SPEC §10.1). Linux musl targets use cargo-zigbuild.
+# Standalone binary with the UI embedded (SPEC §10.1). Linux musl targets use cargo-zigbuild
+# (needs `zig` on PATH; CI uses Zig 0.17.0 and cargo-zigbuild 0.23.4).
 dist target=host:
     # 1. Front end (WASM/JS/CSS + public/) into target/site
     cargo leptos build --release --frontend-only

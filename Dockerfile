@@ -50,6 +50,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---- Build ---------------------------------------------------------------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
+# The cargo config sets `--cfg erase_components` (and LEPTOS_OUTPUT_NAME); the cached
+# dependencies must be built with the same flags as the real build or they are rebuilt.
+COPY .cargo .cargo
 # Cache dependencies for both halves of the two-step build: the WASM front end
 # (wasm-release profile, hydrate) and the musl server (ssr).
 RUN cargo chef cook --recipe-path recipe.json --profile wasm-release \

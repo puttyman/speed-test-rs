@@ -39,6 +39,19 @@ mod embed {
         println!("cargo:rerun-if-env-changed=SPEEDTEST_SITE_DIR");
         println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
 
+        // cargo-leptos builds the front end with `--cfg erase_components`
+        // (`always-erase-components`), and a server built without it renders markup the
+        // WASM bundle cannot hydrate. `.cargo/config.toml` sets it; a RUSTFLAGS variable
+        // overrides that file, so check here rather than ship a broken page.
+        if std::env::var_os("CARGO_CFG_ERASE_COMPONENTS").is_none() {
+            panic!(
+                "\n\nThe embedded front end is built with `--cfg erase_components`, so the \
+                 server must be too, or hydration fails in the browser.\n`.cargo/config.toml` \
+                 sets it, but a RUSTFLAGS (or CARGO_ENCODED_RUSTFLAGS) environment variable \
+                 replaces that setting: add `--cfg erase_components` to it.\n\n"
+            );
+        }
+
         let site = site_dir();
         let pkg = site.join("pkg");
         if !pkg.is_dir() {
