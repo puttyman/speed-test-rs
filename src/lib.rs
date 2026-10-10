@@ -1,4 +1,5 @@
 pub mod app;
+pub mod model;
 #[cfg(feature = "ssr")]
 pub mod server;
 
