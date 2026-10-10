@@ -1,7 +1,7 @@
 //! Pluggable WebRTC signalling for the packet-loss test (SPEC §5.7).
 //!
 //! The control socket forwards `rtc_offer` and `ice` messages to an [`RtcSignaling`]
-//! implementation (the str0m echo endpoint, added in a later wave). When none is installed
+//! implementation (`server::rtc::RtcEcho`, the str0m echo endpoint). When none is installed
 //! in [`crate::server::ws::MeasureState::rtc`], the control socket answers
 //! `Error{code: NotFound, message: "packet loss test unavailable"}`.
 
