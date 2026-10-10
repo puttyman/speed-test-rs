@@ -1,0 +1,181 @@
+// Pill buttons (32 px radius), icon buttons, links, chips.
+
+.start-button {
+	position: relative;
+	min-width: 220px;
+	min-height: 60px;
+	padding: var(--space-4) var(--space-12);
+	border: 2px solid var(--color-brand);
+	border-radius: var(--radius-pill);
+	background: var(--color-brand);
+	color: var(--color-on-brand);
+	font: 600 var(--text-md) / 1.5 var(--font-body);
+	letter-spacing: var(--tracking-body);
+	cursor: pointer;
+	transition:
+		background-color var(--dur-base) ease,
+		border-color var(--dur-base) ease,
+		transform var(--dur-fast) var(--ease-standard);
+
+	&:hover {
+		background: var(--color-brand-hover);
+		border-color: var(--color-brand-hover);
+	}
+
+	&:active {
+		background: var(--color-brand-active);
+		transform: scale(0.98);
+	}
+
+	&.is-running {
+		background: transparent;
+		color: var(--color-text);
+
+		&:hover {
+			background: var(--color-brand-soft);
+			border-color: var(--color-brand);
+		}
+	}
+
+	// A soft ring pulses while idle (SPEC §7.3).
+	&::after {
+		content: "";
+		position: absolute;
+		inset: -2px;
+		border-radius: inherit;
+		border: 2px solid var(--color-brand);
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	&.is-idle::after {
+		animation: start-pulse 2.4s var(--ease-out) infinite;
+	}
+
+	@media (max-width: 520px) {
+		width: 100%;
+	}
+}
+
+@keyframes start-pulse {
+	0% {
+		transform: scale(1);
+		opacity: 0.45;
+	}
+
+	70%,
+	100% {
+		transform: scale(1.12, 1.35);
+		opacity: 0;
+	}
+}
+
+.pill-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	min-height: 44px;
+	padding: var(--space-2) var(--space-6);
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: var(--color-brand);
+	color: var(--color-on-brand);
+	font-weight: 600;
+	font-size: var(--text-sm);
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background-color var(--dur-base) ease;
+
+	&:hover {
+		background: var(--color-brand-hover);
+		text-decoration: none;
+	}
+
+	&:active {
+		background: var(--color-brand-active);
+	}
+}
+
+.pill-sm {
+	min-height: 36px;
+	padding: var(--space-1) var(--space-4);
+}
+
+.icon-button {
+	display: inline-grid;
+	place-items: center;
+	width: 40px;
+	height: 40px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--color-text);
+	cursor: pointer;
+	transition: background-color var(--dur-fast) var(--ease-standard);
+
+	&:hover {
+		background: var(--color-brand-soft);
+	}
+
+	&:active {
+		background: var(--color-border);
+	}
+}
+
+.icon {
+	display: block;
+	flex: none;
+}
+
+.link-button {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--color-link);
+	font-size: inherit;
+	cursor: pointer;
+
+	&:hover {
+		text-decoration: underline;
+	}
+}
+
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.chip {
+	min-height: 32px;
+	padding: var(--space-1) var(--space-3);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg);
+	color: var(--color-text-body);
+	font-size: var(--text-sm);
+	cursor: pointer;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	transition:
+		background-color var(--dur-fast) var(--ease-standard),
+		border-color var(--dur-fast) var(--ease-standard);
+
+	&:hover {
+		background: var(--color-brand-soft);
+		border-color: var(--color-border-strong);
+	}
+
+	&.is-selected {
+		border-color: var(--color-brand);
+		color: var(--color-text);
+		font-weight: 600;
+	}
+}

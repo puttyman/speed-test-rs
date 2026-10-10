@@ -1,0 +1,75 @@
+// Segmented control (docs/design/tokens.md §3): soft track, sliding thumb.
+
+.segmented {
+	--seg-n: 2;
+	--seg-i: 0;
+	position: relative;
+	display: grid;
+	grid-template-columns: repeat(var(--seg-n), minmax(0, 1fr));
+	padding: 2px;
+	border-radius: var(--radius-sm);
+	background: var(--color-brand-soft);
+	isolation: isolate;
+
+	&[aria-disabled="true"] {
+		opacity: 0.55;
+	}
+}
+
+.segmented-thumb {
+	position: absolute;
+	z-index: 0;
+	top: 2px;
+	bottom: 2px;
+	left: 2px;
+	width: calc((100% - 4px) / var(--seg-n));
+	border-radius: 6px;
+	background: var(--color-bg);
+	box-shadow: 0 1px 2px color-mix(in srgb, var(--color-text) 10%, transparent);
+	transform: translateX(calc(100% * var(--seg-i)));
+	transition: transform var(--dur-control) ease;
+}
+
+.segmented-option {
+	position: relative;
+	z-index: 1;
+	min-height: 32px;
+	padding: var(--space-1) var(--space-3);
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--color-text-muted);
+	font-size: var(--text-sm);
+	font-weight: 600;
+	letter-spacing: var(--tracking-body);
+	white-space: nowrap;
+	cursor: pointer;
+	transition: color var(--dur-control) ease;
+
+	&[aria-checked="true"] {
+		color: var(--color-text);
+	}
+
+	&:hover:not(:disabled) {
+		color: var(--color-text);
+	}
+
+	&:disabled {
+		cursor: not-allowed;
+	}
+
+	&:focus-visible {
+		outline-offset: 0;
+	}
+}
+
+.segmented-sm .segmented-option {
+	min-height: 28px;
+	padding: 2px var(--space-3);
+	font-size: var(--text-xs);
+}
+
+.segmented-dense .segmented-option {
+	padding-inline: 0;
+	font-variant-numeric: tabular-nums;
+}

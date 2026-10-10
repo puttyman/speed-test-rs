@@ -3214,6 +3214,7 @@ dependencies = [
  "reqwest",
  "rust-embed",
  "rustls",
+ "send_wrapper",
  "serde",
  "serde_json",
  "socket2",

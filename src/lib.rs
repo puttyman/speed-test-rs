@@ -1,9 +1,15 @@
+// The test page view is a deep tachys type; release builds need a higher limit.
+#![recursion_limit = "256"]
+
 pub mod app;
+pub mod components;
 #[cfg(any(feature = "hydrate", test))]
 pub mod engine;
 pub mod model;
+pub mod pages;
 #[cfg(feature = "ssr")]
 pub mod server;
+pub mod ui_state;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
