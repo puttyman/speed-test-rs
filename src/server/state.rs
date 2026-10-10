@@ -7,6 +7,7 @@ use leptos::config::{Env, LeptosOptions, ReloadWSProtocol};
 
 use super::assets::Assets;
 use super::config::{Config, process_env};
+use super::ws::MeasureState;
 
 /// State shared by every handler (`State<AppState>`, or a sub-state through [`FromRef`]).
 ///
@@ -22,6 +23,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// Where UI assets are served from (embedded or disk).
     pub assets: Assets,
+    /// Measurement runtime: session registry, payload buffer, limits, WebRTC hook.
+    pub measure: MeasureState,
     // Future: `pub sessions: SessionRegistry`, `pub db: Option<SqlitePool>`, ...
 }
 
@@ -29,10 +32,12 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let leptos = leptos_options(&config, process_env);
         let assets = Assets::from_config(&config);
+        let measure = MeasureState::new(&config);
         Self {
             leptos,
             config: Arc::new(config),
             assets,
+            measure,
         }
     }
 }
