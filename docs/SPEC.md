@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v0.1 |
-| **Last updated** | 2026-10-10 (v0.4: multi-device, captured design tokens; v0.3: visual design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
+| **Last updated** | 2026-10-10 (v0.4: multi-device, design tokens; v0.3: visual design, motion, auto-saved labelled history, units toggle, PWA, GitHub Actions release) |
 | **Stack** | Rust 2024 edition (stable, MSRV 1.94) · Leptos 0.8 (SSR + hydration/WASM) · Axum 0.8 · Tokio · WebSocket · WebRTC (str0m) · SQLite |
 | **License** | MIT OR Apache-2.0 |
 
@@ -460,13 +460,11 @@ RunResult {
 
 ### 7.1 Design direction
 
-Three sources, each used for a different thing:
-
-| Aspect | Source | What it means |
-|---|---|---|
-| **Information layout** | speed.cloudflare.com | Big headline number, metric tiles, quality scores, detailed per-phase charts |
-| **Visual style**: color, typography, shape, look and feel | **Our own** | Palette, type scale and weights, corner radii, spacing rhythm, surface and depth treatment, button and card style |
-| **Language and copywriting** | **Our own** (§7.5). | Short, plain, technical-friendly |
+| Aspect | Direction |
+|---|---|
+| **Information layout** | Like speed.cloudflare.com: big headline number, metric tiles, quality scores, detailed per-phase charts |
+| **Visual style**: color, typography, shape, look and feel | Our own: monochrome and light-first, near-black type on white, flat light-grey cards, pill buttons, a mono display face. Color is used only for data and status. |
+| **Language and copywriting** | Our own (§7.5): short, plain, technical-friendly |
 
 All fonts are open-licensed (OFL / Apache) and **self-hosted** inside the binary (§2.1 goal 9:
 no external requests).
@@ -492,7 +490,7 @@ manual toggle. Components reference tokens only and never raw values.
 | Depth | `--shadow-1`, `--shadow-2`, `--blur-glass` | Cards and the raised hero |
 | Motion | `--ease-out`, `--ease-spring`, `--dur-fast` (120 ms), `--dur-base` (240 ms), `--dur-slow` (480 ms) | §7.3 |
 
-**Values (captured 2026-10-10, see `docs/design/tokens.md`; implemented in `style/_tokens.scss`):**
+**Values (see `docs/design/tokens.md`; implemented in `style/_tokens.scss`):**
 - **Palette**: monochrome brand (`#101010` on `#ffffff`), with `#f7f7f7` surfaces and `#dedede` /
   `#cccccc` hairlines. Accents are used sparingly: a pink→amber gradient (`#ff7bad → #ffba2f`,
   used for the brand mark) and lime `#f2ff00` (never as text on light).
@@ -536,7 +534,7 @@ replaced by a static gradient, count-ups become crossfades, and view transitions
 
 ### 7.4 Layout and components
 
-- **Theme**: **light-first** (white page, `#f7f7f7` cards, near-black type and pill buttons). The dark theme uses deep blue-grey surfaces (`#171d26`). Follows `prefers-color-scheme` by default, with a manual toggle.
+- **Theme**: **light-first** (white page, `#f7f7f7` cards, near-black type and pill buttons), with a deep blue-grey dark theme (`#171d26`). Follows `prefers-color-scheme` by default, with a manual toggle.
 - **Hero**:
   - a large display-weight headline number (current or final download speed) over the packet-flow canvas
   - the phase timeline
@@ -990,7 +988,7 @@ Dockerfile, docker-compose.yml
 | # | Milestone | Scope | Exit criteria |
 |---|---|---|---|
 | **M0** | **Modernize** *(done in this change)* | Upgrade Leptos 0.6 → 0.8 and Axum 0.7 → 0.8. Drop Thaw. Rename the crate `leptops-axum` → `speed-test-rs`. Fix the broken build. Commit `Cargo.lock`. Add `/api/health`, a Cloudflare-style placeholder layout, the Dockerfile, compose, and the license. | `cargo leptos build` succeeds. The page hydrates with no console errors. The Docker image builds and serves. |
-| M1 | WebSocket engine and design foundation | `model::{protocol,stats,profile}`. `/ws/probe` and `/ws/data`. Client engine for idle latency, jitter, download and upload with ramp halting. **Design tokens** (§7.2, values in `docs/design/tokens.md`), self-hosted open fonts, base components, live tiles with count-up, phase timeline, units toggle (§7.6). | The `quick` profile completes on localhost and over Wi-Fi with plausible numbers. Unit and integration tests pass. The UI uses tokens only (no raw colors in components). |
+| M1 | WebSocket engine and design foundation | `model::{protocol,stats,profile}`. `/ws/probe` and `/ws/data`. Client engine for idle latency, jitter, download and upload with ramp halting. **Design tokens** (§7.2, `docs/design/tokens.md`), self-hosted open fonts, base components, live tiles with count-up, phase timeline, units toggle (§7.6). | The `quick` profile completes on localhost and over Wi-Fi with plausible numbers. Unit and integration tests pass. The UI uses tokens only (no raw colors in components). |
 | M2 | Loaded latency, scores, charts, motion | Probe during load. AIM scores. Box plot, dot plot, sparkline, live area chart. Detail section. **Motion system** (§7.3): packet-flow canvas, result reveal, micro-interactions, reduced-motion mode, performance guard. Dark and light theme toggle. | Scoring unit tests match the Cloudflare SDK. 60 fps on a mid-range phone. A `quick` run with animation on and off gives results within 5%. |
 | M3 | HTTP mode | `__down`/`__up`, the client HTTP engine, the transport toggle | WebSocket and HTTP results within 10% of each other on a wired LAN |
 | M4 | Packet loss (WebRTC) | str0m endpoint on a single UDP port, signalling over `/ws/control`, client DataChannel engine, a graceful "unavailable" state | netem 1% loss is measured as 1% ± 0.5%. Works with `--network host` and with bridge mode plus `SPEEDTEST_PUBLIC_IP`. |
@@ -1065,7 +1063,7 @@ written; they haven't run on GitHub yet.
 | Release tooling | Hand-written GitHub Actions (§10.1) |
 | Labels | Free text with chips, auto-saved and prefilled (§7.7) |
 | Units | Mbps by default, with a toggle for MB/s and auto-scaling to Gbps / GB/s (§7.6) |
-| Visual style | Monochrome, light-first look with a dark theme. IBM Plex Mono + Inter (OFL). Our own copy (§7.1, §7.2, §7.5). |
+| Visual style | Monochrome, light-first look, with a derived dark theme. IBM Plex Mono + Inter (OFL). Our own copy (§7.1, §7.2, §7.5). |
 | Multi-device | Live presence over `/ws/control`, synchronized group tests, overlap flagging (§5.11, §7.11) |
 | Dependencies | Latest stable releases. Leptos 0.9 adopted once stable (§4.1). |
 | Motion | Packet flow, count-up, live chart, phase timeline, result reveal, view transitions (§7.3) |
