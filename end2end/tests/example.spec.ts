@@ -1,11 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { BASE, hydrated, runToCompletion } from "./helpers";
 
-const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-
-/** Waits until hydration has applied the stored settings (the label is prefilled). */
-async function hydrated(page: Page) {
-  await expect(page.locator(".label-text")).not.toBeEmpty({ timeout: 15_000 });
-}
 
 /** Selects the quick profile (stored per device) and reloads. */
 async function useQuickProfile(page: Page, transport = "websocket") {
@@ -16,12 +11,6 @@ async function useQuickProfile(page: Page, transport = "websocket") {
   }, transport);
   await page.reload();
   await hydrated(page);
-}
-
-async function runToCompletion(page: Page) {
-  await page.locator(".start-button").click();
-  await expect(page.locator(".start-button")).toHaveText("Stop");
-  await expect(page.locator(".start-button")).toHaveText("Test again", { timeout: 120_000 });
 }
 
 test("home page renders the speed test shell", async ({ page }) => {
@@ -123,8 +112,11 @@ test("reduced motion replaces the particles with a static gradient", async ({ br
   await ctx.close();
 });
 
-test("history link is not a 404", async ({ page }) => {
+test("history link opens the history page", async ({ page }) => {
   await page.goto(`${BASE}/`);
+  await hydrated(page);
   await page.locator(".site-nav a", { hasText: "History" }).click();
-  await expect(page.getByText("History is coming soon")).toBeVisible();
+  await expect(page).toHaveURL(/\/history$/);
+  await expect(page.locator("h1")).toHaveText("History");
+  await expect(page.locator('.site-nav a[aria-current="page"]')).toHaveText("History");
 });

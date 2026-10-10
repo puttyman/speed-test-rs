@@ -4,15 +4,20 @@
 use leptos::prelude::*;
 use leptos_meta::{MetaTags, Stylesheet, Title, provide_meta_context};
 use leptos_router::{
-    StaticSegment,
-    components::{A, Route, Router, Routes},
+    ParamSegment, StaticSegment,
+    components::{Route, Router, Routes},
+    hooks::use_location,
 };
 
+use crate::components::devices_panel::InviteToast;
+use crate::components::presence::provide_presence;
 use crate::components::pwa_toast::PwaToast;
 use crate::components::settings_drawer::{SettingsButton, SettingsDrawer};
 use crate::components::theme_toggle::ThemeToggle;
 use crate::components::units_toggle::UnitsToggle;
+use crate::pages::compare::ComparePage;
 use crate::pages::history::HistoryPage;
+use crate::pages::run::RunPage;
 use crate::pages::test::TestPage;
 use crate::ui_state::{THEME_BOOT_SCRIPT, provide_ui_state};
 
@@ -65,6 +70,8 @@ pub fn App() -> impl IntoView {
     // Provides context that manages stylesheets, titles, meta tags, etc.
     provide_meta_context();
     let ui = provide_ui_state();
+    // One presence connection per page load, shared by every page (SPEC §5.11).
+    provide_presence(ui);
 
     view! {
         // id=leptos means cargo-leptos will hot-reload this stylesheet
@@ -77,19 +84,45 @@ pub fn App() -> impl IntoView {
             </a>
             <Header/>
             <main id="main" class="page">
-                <Routes fallback=|| view! { <NotFound/> }>
+                // View transitions between pages (SPEC §7.3); the router
+                // falls back to a plain swap where they're unsupported, and
+                // CSS turns the animation off for reduced motion.
+                <Routes transition=true fallback=|| view! { <NotFound/> }>
                     <Route path=StaticSegment("") view=TestPage/>
                     <Route path=StaticSegment("history") view=HistoryPage/>
+                    <Route path=StaticSegment("compare") view=ComparePage/>
+                    <Route path=(StaticSegment("runs"), ParamSegment("id")) view=RunPage/>
                 </Routes>
             </main>
             <SettingsDrawer locked=ui.running max_streams=ui.max_streams/>
+            <InviteToast/>
             <PwaToast/>
         </Router>
     }
 }
 
+/// The nav section a path belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Test,
+    History,
+    Other,
+}
+
+/// History, compare and run pages all live under "History".
+pub fn section_of(path: &str) -> Section {
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    match first {
+        "" => Section::Test,
+        "history" | "compare" | "runs" => Section::History,
+        _ => Section::Other,
+    }
+}
+
 #[component]
 fn Header() -> impl IntoView {
+    let location = use_location();
+    let section = move || location.pathname.with(|p| section_of(p));
     view! {
         <header class="site-header">
             <div class="inner">
@@ -98,10 +131,15 @@ fn Header() -> impl IntoView {
                     <span class="brand-name">"speed-test-rs"</span>
                 </a>
                 <nav class="site-nav" aria-label="Main">
-                    <A href="/" exact=true>
+                    <a href="/" aria-current=move || (section() == Section::Test).then_some("page")>
                         "Test"
-                    </A>
-                    <A href="/history">"History"</A>
+                    </a>
+                    <a
+                        href="/history"
+                        aria-current=move || (section() == Section::History).then_some("page")
+                    >
+                        "History"
+                    </a>
                 </nav>
                 <div class="header-tools">
                     <UnitsToggle class="segmented-sm header-units"/>
@@ -131,5 +169,19 @@ fn NotFound() -> impl IntoView {
                 "Back to the speed test"
             </a>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nav_sections() {
+        assert_eq!(section_of("/"), Section::Test);
+        assert_eq!(section_of("/history"), Section::History);
+        assert_eq!(section_of("/compare"), Section::History);
+        assert_eq!(section_of("/runs/abc"), Section::History);
+        assert_eq!(section_of("/nope"), Section::Other);
     }
 }

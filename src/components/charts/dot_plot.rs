@@ -263,7 +263,7 @@ pub fn DotPlot(
         }}
         <ValuesTable
             summary=format!("{} values", series.label())
-            headers=vec!["Payload", "Speed", "Duration"]
+            headers=vec!["Payload", "Speed", "Duration"].into_iter().map(String::from).collect()
             rows=table_rows
         />
     }

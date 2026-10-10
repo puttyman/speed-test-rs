@@ -214,6 +214,20 @@ pub fn SettingsDrawer(
                         />
                     </label>
                     <p class="setting-note">"Shown in history and used for default labels."</p>
+                    <label class="switch setting-switch">
+                        <input
+                            type="checkbox"
+                            role="switch"
+                            id="hide-me"
+                            prop:checked=move || ui.hide_me.get()
+                            on:change=move |ev| ui.hide_me.set(event_target_checked(&ev))
+                        />
+                        <span class="switch-track" aria-hidden="true"></span>
+                        <span class="switch-text">"Hide me"</span>
+                    </label>
+                    <p class="setting-note">
+                        "Other devices see “1 hidden device testing” instead of this device's name and label."
+                    </p>
                 </section>
             </div>
         </aside>

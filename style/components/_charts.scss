@@ -13,6 +13,12 @@
 	--series: var(--series-latency);
 }
 
+@for $i from 1 through 8 {
+	.series-device-#{$i} {
+		--series: var(--device-#{$i});
+	}
+}
+
 .chart-head {
 	display: flex;
 	flex-wrap: wrap;

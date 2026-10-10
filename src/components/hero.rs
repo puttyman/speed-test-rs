@@ -4,7 +4,7 @@
 use leptos::prelude::*;
 
 use super::MetricKind;
-use super::motion::{CountUp, FlowMode, PacketFlow};
+use super::motion::{CountUp, FlowMode, OtherFlow, PacketFlow};
 use super::phase_timeline::{PhaseTimeline, TimelineStep};
 use crate::ui_state::use_ui_state;
 
@@ -25,16 +25,29 @@ pub fn Hero(
     /// Muted number while idle.
     #[prop(into)]
     idle: Signal<bool>,
+    /// Other devices' traffic for the packet-flow canvas.
+    #[prop(optional, into)]
+    others: Signal<Vec<OtherFlow>>,
+    /// `view-transition-name` of the number (SPEC §7.3).
+    #[prop(optional, into)]
+    vt_name: Signal<String>,
     children: Children,
 ) -> impl IntoView {
     let ui = use_ui_state();
     let kind = Memo::new(move |_| kind.get());
     view! {
         <section class="hero" aria-labelledby="hero-title">
-            <PacketFlow mode=flow_mode bps=flow_bps pulses=pulses/>
+            <PacketFlow mode=flow_mode bps=flow_bps pulses=pulses others=others/>
             <div class="hero-inner">
                 <h1 id="hero-title" class="hero-title">{move || title.get()}</h1>
-                <p class="hero-value" class:is-idle=move || idle.get()>
+                <p
+                    class="hero-value"
+                    class:is-idle=move || idle.get()
+                    style=move || {
+                        let n = vt_name.get();
+                        (!n.is_empty()).then(|| format!("view-transition-name:{n}"))
+                    }
+                >
                     // One count-up per kind, so a unit change never tweens
                     // across units.
                     {move || {

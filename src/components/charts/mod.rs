@@ -12,12 +12,16 @@ pub mod live_area;
 pub mod loss_bar;
 pub mod scale;
 pub mod sparkline;
+pub mod stacked_area;
+pub mod strip_plot;
 
 pub use box_plot::{BoxPlotChart, BoxRow};
 pub use dot_plot::DotPlot;
 pub use live_area::{LiveArea, LivePoint, PayloadTick};
 pub use loss_bar::LossBar;
 pub use sparkline::Sparkline;
+pub use stacked_area::{StackLayer, StackedArea};
+pub use strip_plot::{StripPlot, StripRow};
 
 use leptos::html;
 use leptos::prelude::*;
@@ -28,6 +32,9 @@ pub enum Series {
     Download,
     Upload,
     Latency,
+    /// A categorical slot (`1..=8`, the `--device-*` tokens): one color per
+    /// device in group tests, per item in compare.
+    Device(u8),
 }
 
 impl Series {
@@ -37,6 +44,7 @@ impl Series {
             Series::Download => "series-download",
             Series::Upload => "series-upload",
             Series::Latency => "series-latency",
+            Series::Device(n) => DEVICE_CLASSES[usize::from(n.clamp(1, 8)) - 1],
         }
     }
 
@@ -45,9 +53,27 @@ impl Series {
             Series::Download => "Download",
             Series::Upload => "Upload",
             Series::Latency => "Latency",
+            Series::Device(_) => "Device",
         }
     }
+
+    /// The categorical slot for the `i`-th device or item (0-based), cycling
+    /// through the eight colors in their fixed order.
+    pub fn slot(i: usize) -> Series {
+        Series::Device((i % 8) as u8 + 1)
+    }
 }
+
+const DEVICE_CLASSES: [&str; 8] = [
+    "series-device-1",
+    "series-device-2",
+    "series-device-3",
+    "series-device-4",
+    "series-device-5",
+    "series-device-6",
+    "series-device-7",
+    "series-device-8",
+];
 
 /// The width of `node` in CSS pixels, kept up to date with a
 /// `ResizeObserver`. `initial` is used on the server and before mount.
@@ -153,7 +179,7 @@ pub fn ChartTooltip(tip: ReadSignal<Option<Tip>>, width: ReadSignal<f64>) -> imp
 #[component]
 pub fn ValuesTable(
     #[prop(into)] summary: String,
-    headers: Vec<&'static str>,
+    headers: Vec<String>,
     #[prop(into)] rows: Signal<Vec<Vec<String>>>,
 ) -> impl IntoView {
     view! {

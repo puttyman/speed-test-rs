@@ -1,6 +1,7 @@
 // Frosted nav bar.
 
 .site-header {
+	view-transition-name: site-header;
 	position: sticky;
 	top: 0;
 	z-index: 20;
@@ -64,6 +65,7 @@
 
 			&[aria-current="page"] {
 				font-weight: 600;
+				background: var(--color-brand-soft);
 			}
 		}
 	}

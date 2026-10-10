@@ -48,6 +48,34 @@
 	}
 }
 
+// Page transitions (SPEC §7.3): a quick crossfade with a small lift; the
+// hero number and run rows morph via their view-transition-name.
+::view-transition-old(root) {
+	animation: vt-out 180ms var(--ease-standard) both;
+}
+
+::view-transition-new(root) {
+	animation: vt-in 320ms var(--ease-soft) both;
+}
+
+::view-transition-group(*) {
+	animation-duration: 420ms;
+	animation-timing-function: var(--ease-soft);
+}
+
+@keyframes vt-out {
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes vt-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+}
+
 // In-app toggle (data-motion on <html>) and the OS setting.
 @mixin no-motion {
 	--dur-fast: 0ms;
@@ -65,6 +93,13 @@
 	}
 
 	.start-button::after {
+		animation: none !important;
+	}
+
+	// No view transitions with reduced motion.
+	&::view-transition-group(*),
+	&::view-transition-old(*),
+	&::view-transition-new(*) {
 		animation: none !important;
 	}
 }

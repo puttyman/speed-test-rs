@@ -84,6 +84,17 @@ impl Watchdog {
     }
 }
 
+/// Another device's traffic, drawn as faint particles in its color
+/// (SPEC §7.11: the network is visibly shared).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OtherFlow {
+    /// Categorical slot `1..=8` (`--device-N`).
+    pub slot: u8,
+    /// `Download` or `Upload`.
+    pub mode: FlowMode,
+    pub bps: f64,
+}
+
 #[component]
 pub fn PacketFlow(
     #[prop(into)] mode: Signal<FlowMode>,
@@ -93,15 +104,18 @@ pub fn PacketFlow(
     /// Increments once per latency probe.
     #[prop(into)]
     pulses: Signal<u32>,
+    /// Other devices' transfers.
+    #[prop(optional, into)]
+    others: Signal<Vec<OtherFlow>>,
 ) -> impl IntoView {
     let canvas = NodeRef::<html::Canvas>::new();
     let ui = crate::ui_state::use_ui_state();
     let reduced = Memo::new(move |_| ui.reduced_motion());
 
     #[cfg(feature = "hydrate")]
-    imp::run(canvas, reduced, mode, bps, pulses);
+    imp::run(canvas, reduced, mode, bps, pulses, others);
     #[cfg(not(feature = "hydrate"))]
-    let _ = (mode, bps, pulses);
+    let _ = (mode, bps, pulses, others);
 
     view! {
         <div class="packet-flow" class:is-static=move || reduced.get() aria-hidden="true">
@@ -135,6 +149,8 @@ mod imp {
         kind: FlowMode,
         /// Fades out when the mode changed.
         dying: bool,
+        /// 0 for this device, else another device's color slot.
+        slot: u8,
     }
 
     struct Pulse {
@@ -148,6 +164,7 @@ mod imp {
         upload: String,
         latency: String,
         idle: String,
+        devices: [String; 8],
     }
 
     struct Sim {
@@ -182,6 +199,7 @@ mod imp {
         mode: Signal<FlowMode>,
         bps: Signal<Option<f64>>,
         pulses: Signal<u32>,
+        others: Signal<Vec<OtherFlow>>,
     ) {
         let sim = Rc::new(RefCell::new(Sim {
             particles: Vec::new(),
@@ -214,8 +232,9 @@ mod imp {
                 }
                 sim.borrow_mut().last_ts = None;
                 let sim = sim.clone();
-                let handle =
-                    raf_loop(move |ts| frame(&el, &mut sim.borrow_mut(), ts, mode, bps, pulses));
+                let handle = raf_loop(move |ts| {
+                    frame(&el, &mut sim.borrow_mut(), ts, mode, bps, pulses, others)
+                });
                 *alive.borrow_mut() = Some(handle);
             }
         };
@@ -275,6 +294,7 @@ mod imp {
         mode: Signal<FlowMode>,
         bps: Signal<Option<f64>>,
         pulses: Signal<u32>,
+        others: Signal<Vec<OtherFlow>>,
     ) -> bool {
         if !el.is_connected() {
             return false;
@@ -304,6 +324,7 @@ mod imp {
                 upload: css_var(el, "--series-upload"),
                 latency: css_var(el, "--series-latency"),
                 idle: css_var(el, "--color-text-muted"),
+                devices: std::array::from_fn(|i| css_var(el, &format!("--device-{}", i + 1))),
             };
         }
         let Some(ctx) = el
@@ -325,13 +346,23 @@ mod imp {
         let target = (cap as f64 * flow_density(mode, intensity)).round() as usize;
         let speed = flow_speed(intensity);
 
-        // Mark particles of another mode as dying.
+        // Mark particles of another mode (or of a device that stopped) as dying.
+        let others = others.get_untracked();
         for p in &mut sim.particles {
-            if p.kind != mode {
+            let stale = if p.slot == 0 {
+                p.kind != mode
+            } else {
+                !others.iter().any(|o| o.slot == p.slot && o.mode == p.kind)
+            };
+            if stale {
                 p.dying = true;
             }
         }
-        let live = sim.particles.iter().filter(|p| !p.dying).count();
+        let live = sim
+            .particles
+            .iter()
+            .filter(|p| !p.dying && p.slot == 0)
+            .count();
         let spawn = target
             .saturating_sub(live)
             .min(if mode == FlowMode::Idle { 2 } else { 6 });
@@ -355,6 +386,7 @@ mod imp {
                         alpha: 0.35 + 0.5 * rs,
                         kind: mode,
                         dying: false,
+                        slot: 0,
                     }
                 }
                 FlowMode::Idle | FlowMode::Latency => {
@@ -369,10 +401,46 @@ mod imp {
                         alpha: 0.0,
                         kind: mode,
                         dying: false,
+                        slot: 0,
                     }
                 }
             };
             sim.particles.push(p);
+        }
+
+        // Other devices: faint, thin streaks in their colors.
+        for o in others.iter().filter(|o| {
+            matches!(o.mode, FlowMode::Download | FlowMode::Upload) && (1..=8).contains(&o.slot)
+        }) {
+            let oi = flow_intensity(o.bps);
+            let want = (cap as f64 * 0.18 * (0.3 + 0.7 * oi)).round() as usize;
+            let have = sim
+                .particles
+                .iter()
+                .filter(|p| p.slot == o.slot && p.kind == o.mode && !p.dying)
+                .count();
+            let ospeed = flow_speed(oi);
+            for _ in 0..want.saturating_sub(have).min(3) {
+                let (rx, ry, rs) = (sim.rand(), sim.rand(), sim.rand());
+                let down = o.mode == FlowMode::Download;
+                let v = ospeed * (0.6 + 0.8 * rs);
+                sim.particles.push(Particle {
+                    x: rx * cw,
+                    y: if down {
+                        -20.0 - ry * ch * 0.5
+                    } else {
+                        ch + 20.0 + ry * ch * 0.5
+                    },
+                    vx: 0.0,
+                    vy: if down { v } else { -v },
+                    len: (v * 0.04).clamp(5.0, 26.0),
+                    r: 0.8 + 0.6 * rs,
+                    alpha: 0.16 + 0.18 * rs,
+                    kind: o.mode,
+                    dying: false,
+                    slot: o.slot,
+                });
+            }
         }
 
         // Latency pulses: one per probe.
@@ -433,6 +501,7 @@ mod imp {
         ctx.set_line_cap("round");
         for p in &sim.particles {
             let color = match p.kind {
+                _ if p.slot > 0 => &sim.colors.devices[usize::from(p.slot - 1).min(7)],
                 FlowMode::Download => &sim.colors.download,
                 FlowMode::Upload => &sim.colors.upload,
                 _ => &sim.colors.idle,
