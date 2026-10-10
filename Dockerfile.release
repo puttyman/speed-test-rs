@@ -9,7 +9,7 @@
 #   docker buildx build -f Dockerfile.release --platform linux/amd64,linux/arm64 .
 
 # Runs on the build host (no emulation): only creates the /data mount point.
-FROM --platform=$BUILDPLATFORM busybox:1.37 AS data
+FROM --platform=$BUILDPLATFORM busybox:1.38 AS data
 RUN mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
