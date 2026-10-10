@@ -1,4 +1,6 @@
 pub mod app;
+#[cfg(any(feature = "hydrate", test))]
+pub mod engine;
 pub mod model;
 #[cfg(feature = "ssr")]
 pub mod server;
