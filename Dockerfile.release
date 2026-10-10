@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# Release image (SPEC §10.2): packages the prebuilt, statically linked musl binaries from
+# the release workflow; no compilation happens here. Expected build context layout:
+#
+#   dist/amd64/speed-test-rs   (x86_64-unknown-linux-musl)
+#   dist/arm64/speed-test-rs   (aarch64-unknown-linux-musl)
+#
+#   docker buildx build -f Dockerfile.release --platform linux/amd64,linux/arm64 .
+
+# Runs on the build host (no emulation): only creates the /data mount point.
+FROM --platform=$BUILDPLATFORM busybox:1.37 AS data
+RUN mkdir -p /out/data
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+COPY --chmod=0755 dist/${TARGETARCH}/speed-test-rs /app/speed-test-rs
+# /data owned by the nonroot user so named volumes inherit writable ownership.
+COPY --from=data --chown=65532:65532 /out/data /data
+
+LABEL org.opencontainers.image.title="speed-test-rs" \
+      org.opencontainers.image.description="Self-hosted, Cloudflare-style network speed test for your LAN" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/puttyman/speed-test-rs"
+
+# LEPTOS_SITE_ADDR is the legacy alias of SPEEDTEST_LISTEN (SPEC §9.2).
+ENV SPEEDTEST_DATA_DIR=/data \
+    SPEEDTEST_LISTEN=0.0.0.0:8080 \
+    LEPTOS_SITE_ADDR=0.0.0.0:8080 \
+    RUST_LOG=info
+
+USER nonroot:nonroot
+WORKDIR /app
+VOLUME ["/data"]
+EXPOSE 8080/tcp 3478/udp
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["/app/speed-test-rs", "healthcheck"]
+
+ENTRYPOINT ["/app/speed-test-rs"]

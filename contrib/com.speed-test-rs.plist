@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for speed-test-rs (macOS). Runs while you are logged in.
+
+  Install:
+    sudo install -m 0755 speed-test-rs /usr/local/bin/speed-test-rs
+    xattr -d com.apple.quarantine /usr/local/bin/speed-test-rs   # unsigned binary (v1)
+    cp contrib/com.speed-test-rs.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.speed-test-rs.plist
+
+  Stop / remove:
+    launchctl bootout gui/$(id -u)/com.speed-test-rs
+
+  History is stored in ~/Library/Application Support/speed-test-rs (the default data dir).
+  The first start may show a macOS firewall prompt: allow incoming connections.
+  launchd does not expand "~", so the log path below is absolute; change it if you like.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.speed-test-rs</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/speed-test-rs</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SPEEDTEST_LISTEN</key>
+    <string>0.0.0.0:8080</string>
+    <key>SPEEDTEST_UDP_PORT</key>
+    <string>3478</string>
+    <key>RUST_LOG</key>
+    <string>info</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/speed-test-rs.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/speed-test-rs.log</string>
+</dict>
+</plist>
