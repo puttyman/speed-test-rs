@@ -303,13 +303,34 @@ impl Measurements {
 
     /// Bandwidth values (bps) that count: duration ≥ `bandwidth_min_request_ms`
     /// or from a bypassing step.
+    ///
+    /// On a very fast link every request can finish under `bandwidth_min_request_ms`. Rather
+    /// than reporting nothing, the samples of the longest-running request size are used then.
     pub fn valid_bandwidth(&self, dir: Direction, config: &Config) -> Vec<f64> {
-        self.samples(dir)
+        let samples = self.samples(dir);
+        let valid: Vec<f64> = samples
             .iter()
             .filter(|s| {
                 s.bypass_min_duration || s.point.duration_ms >= config.bandwidth_min_request_ms
             })
             .map(|s| s.point.bps)
+            .collect();
+        if !valid.is_empty() {
+            return valid;
+        }
+        let Some(max_bytes) = samples
+            .iter()
+            .filter(|s| s.point.duration_ms > 0.0 && s.point.bps.is_finite())
+            .map(|s| s.point.bytes)
+            .max()
+        else {
+            return Vec::new();
+        };
+        samples
+            .iter()
+            .filter(|s| s.point.bytes == max_bytes && s.point.duration_ms > 0.0)
+            .map(|s| s.point.bps)
+            .filter(|bps| bps.is_finite())
             .collect()
     }
 
@@ -522,6 +543,39 @@ mod tests {
     use super::*;
     use crate::model::profile::Profile;
     use crate::model::scores::Classification;
+
+    #[test]
+    fn bandwidth_falls_back_to_largest_size_when_all_requests_are_too_short() {
+        let config = Config::default();
+        let mut m = Measurements::default();
+        // Loopback-fast: every request finishes well under 10 ms.
+        m.push_bandwidth(
+            Direction::Upload,
+            BandwidthPoint::new(100_000, 0.5, None),
+            false,
+        );
+        m.push_bandwidth(
+            Direction::Upload,
+            BandwidthPoint::new(1_000_000, 2.0, None),
+            false,
+        );
+        m.push_bandwidth(
+            Direction::Upload,
+            BandwidthPoint::new(1_000_000, 4.0, None),
+            false,
+        );
+        let valid = m.valid_bandwidth(Direction::Upload, &config);
+        assert_eq!(valid, vec![4.0e9, 2.0e9]);
+
+        // As soon as one request is long enough, only qualifying samples count.
+        m.push_bandwidth(
+            Direction::Upload,
+            BandwidthPoint::new(10_000_000, 20.0, None),
+            false,
+        );
+        assert_eq!(m.valid_bandwidth(Direction::Upload, &config), vec![4.0e9]);
+        assert!(m.valid_bandwidth(Direction::Download, &config).is_empty());
+    }
 
     fn close(a: Option<f64>, b: f64) -> bool {
         a.is_some_and(|a| (a - b).abs() < 1e-6)
