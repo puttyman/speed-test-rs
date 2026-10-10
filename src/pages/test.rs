@@ -37,8 +37,7 @@ use crate::ui_state::{keys, storage_get, storage_set, use_ui_state};
 /// skipped ("Unavailable").
 #[cfg(feature = "hydrate")]
 fn packet_loss_probe() -> Option<std::rc::Rc<dyn crate::engine::PacketLossProbe>> {
-    // TODO(wave C3): return Some(crate::engine::rtc::packet_loss_probe())
-    None
+    crate::engine::default_packet_loss_probe()
 }
 
 // ---------------------------------------------------------------------------------------------
