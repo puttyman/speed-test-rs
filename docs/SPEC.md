@@ -1002,6 +1002,38 @@ Dockerfile, docker-compose.yml
 | M8 | PWA and HTTPS | Manifest, icons, service worker (app shell only, never `/api` or `/ws`), update toast, iOS meta tags. Optional `rustls` TLS listener (`--tls-*`). README guides for mkcert and reverse proxies. | Installs on Android Chrome and desktop Chrome/Edge over HTTPS. Adds to the iOS home screen. The offline shell shows the friendly offline page. |
 | M9 | Release | Hand-written GitHub Actions `release.yml` (§10.1) producing all targets with `SHA256SUMS` and a multi-arch GHCR image from the same binaries. `ci.yml` (fmt, clippy, tests, e2e, smoke). README with screenshots and install instructions for both. CONTRIBUTING. v0.1.0 tag. | Pushing tag `v0.1.0` publishes a GitHub Release whose binaries run on every target, and `docker run ghcr.io/puttyman/speed-test-rs:0.1.0` works on amd64 and arm64. |
 
+### 14.1 Implementation status (2026-10-10)
+
+M0–M8 are implemented on `claude/hopeful-heisenberg-fvdq5d`. M9 (release) has its workflows
+written; they haven't run on GitHub yet.
+
+**Verified:**
+- 205 Rust tests: 184 unit, 15 measurement integration, 6 presence and group integration.
+- 14 Playwright tests in Chromium against the single release binary, run alone with no
+  `LEPTOS_*` env and no site folder: test runs over WebSocket and HTTP, auto-save and rename,
+  units and theme, history, compare, run page, and a 3-device Test-together flow.
+- Smoke test of the embedded binary.
+- x86_64, aarch64 and armv7 musl builds. Each passes the smoke test and a full WebRTC run
+  (the ARM ones under qemu).
+- `Dockerfile.release` in bridge and host networking modes.
+- Loopback throughput: the server handles 13.5 Gbps (WebSocket download) and 11 Gbps
+  (upload). Chromium's WebSocket stack caps a single page at about 0.5–0.9 Gbps here.
+- Packet loss: 0/1000 on a clean link. With 2% loss injected by a UDP relay, the mean of
+  five runs measured 2.0%.
+
+**Known gaps and deviations:**
+
+| Item | State |
+|---|---|
+| macOS/Windows release builds, Zig and qemu on GitHub runners, a full local `Dockerfile` build | Not run yet (no network for containers or macOS/Windows hosts in development) |
+| `tc netem` accuracy test (§12) | Not possible in the dev sandbox (no netem in the kernel). Loss was validated with a userspace relay instead. |
+| IPv6 listening | Code path exists. Untested (no IPv6 in the dev sandbox). |
+| Binary size | 23.9 MB (x86_64 musl, stripped, fat LTO) vs the 10–15 MB estimate. Two crypto stacks are linked: ring for rustls TLS and aws-lc for str0m DTLS. Moving rustls to aws-lc-rs would remove one. |
+| WASM size | 1.85 MB raw / about 485 KB Brotli (erased components, `wasm-opt -Oz`) |
+| `hash-files` | Off. Leptos 0.8 needs `hash.txt` next to the binary, which conflicts with single-file distribution. Assets use ETag revalidation instead. |
+| Peer `latency_ms` in presence | Always `None` (no client→server live latency report yet) |
+| Leptos "erased components" | On for every build (`.cargo/config.toml` rustflags plus `always-erase-components`). Server and WASM must agree. A `RUSTFLAGS` env var overrides it, so `build.rs` guards the embed build. |
+
 ## 15. Future ideas (post-v1)
 
 - A headless CLI client (`speed-test-rs client http://server:8080`) for scripted or cron
