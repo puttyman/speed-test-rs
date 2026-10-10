@@ -1,0 +1,420 @@
+// Charts (dataviz rules): thin marks, hairline recessive grid, text in text
+// tokens, series color only on marks.
+
+.series-download {
+	--series: var(--series-download);
+}
+
+.series-upload {
+	--series: var(--series-upload);
+}
+
+.series-latency {
+	--series: var(--series-latency);
+}
+
+.chart-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-2) var(--space-4);
+	margin-bottom: var(--space-3);
+}
+
+.chart-title {
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--color-text);
+}
+
+.legend {
+	display: flex;
+	gap: var(--space-4);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+
+	li {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+}
+
+.line-key {
+	display: inline-block;
+	flex: none;
+	width: 14px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--series);
+}
+
+.chart-wrap {
+	position: relative;
+	width: 100%;
+	min-width: 0;
+}
+
+.chart-svg {
+	display: block;
+	max-width: 100%;
+	overflow: visible;
+	touch-action: pan-y;
+	font-family: var(--font-body);
+
+	.grid {
+		stroke: var(--color-border);
+		stroke-width: 1;
+		shape-rendering: crispEdges;
+	}
+
+	.baseline {
+		stroke: var(--color-border-strong);
+		stroke-width: 1;
+		shape-rendering: crispEdges;
+	}
+
+	.axis-label,
+	.axis-unit,
+	.tick-label {
+		fill: var(--color-text-muted);
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0;
+	}
+
+	.axis-unit {
+		font-weight: 600;
+	}
+
+	.payload-tick {
+		stroke: var(--color-border);
+		stroke-width: 1;
+		shape-rendering: crispEdges;
+	}
+
+	.tick-label {
+		font-size: 10px;
+	}
+
+	.area {
+		fill: var(--series);
+		fill-opacity: 0.1;
+		stroke: none;
+	}
+
+	.line {
+		fill: none;
+		stroke: var(--series);
+		stroke-width: 2;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+	}
+
+	.point {
+		fill: var(--series);
+	}
+
+	.crosshair {
+		stroke: var(--color-text-muted);
+		stroke-width: 1;
+		shape-rendering: crispEdges;
+	}
+
+	// Box plot
+	.row-label {
+		fill: var(--color-text);
+		font-size: 13px;
+		font-weight: 500;
+		letter-spacing: -0.01em;
+	}
+
+	.box {
+		fill: var(--series);
+		fill-opacity: 0.18;
+	}
+
+	.median {
+		stroke: var(--series);
+		stroke-width: 2.5;
+		stroke-linecap: round;
+	}
+
+	.whisker,
+	.whisker-cap {
+		stroke: var(--series);
+		stroke-width: 1.5;
+		stroke-linecap: round;
+	}
+
+	// Dot plot
+	.dot {
+		fill: var(--series);
+		stroke: var(--color-surface);
+		stroke-width: 2;
+	}
+
+	.ref-line {
+		stroke: var(--color-text);
+		stroke-width: 1;
+		stroke-opacity: 0.55;
+		shape-rendering: crispEdges;
+	}
+
+	.ref-label {
+		fill: var(--color-text);
+		font-size: 11px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		paint-order: stroke;
+		stroke: var(--color-surface);
+		stroke-width: 4px;
+		stroke-linejoin: round;
+	}
+}
+
+.sparkline {
+	.spark-line {
+		fill: none;
+		stroke: var(--series);
+		stroke-width: 1.75;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+	}
+
+	.spark-area {
+		fill: var(--series);
+		fill-opacity: 0.1;
+	}
+}
+
+.chart-empty {
+	position: absolute;
+	inset: 0 0 26px 44px;
+	display: grid;
+	place-items: center;
+	color: var(--color-text-muted);
+	font-size: var(--text-sm);
+	text-align: center;
+	pointer-events: none;
+}
+
+// Tooltip ----------------------------------------------------------------------
+
+.chart-tip {
+	position: absolute;
+	z-index: 5;
+	min-width: 120px;
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	background: var(--color-surface-raised);
+	box-shadow: var(--shadow-2);
+	font-size: var(--text-xs);
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+.chart-tip-title {
+	margin-bottom: 2px;
+	color: var(--color-text-muted);
+	font-weight: 500;
+}
+
+.chart-tip-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.chart-tip-value {
+	color: var(--color-text);
+	font-weight: 700;
+	font-size: var(--text-sm);
+}
+
+.chart-tip-label {
+	color: var(--color-text-muted);
+}
+
+// Values table -------------------------------------------------------------------
+
+.values-table {
+	margin-top: var(--space-3);
+	font-size: var(--text-xs);
+
+	summary {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		padding: var(--space-1) 0;
+		color: var(--color-text-muted);
+		font-weight: 500;
+		cursor: pointer;
+		list-style: none;
+
+		&::-webkit-details-marker {
+			display: none;
+		}
+
+		&::before {
+			content: "";
+			width: 6px;
+			height: 6px;
+			margin-right: 4px;
+			border-right: 1.5px solid currentColor;
+			border-bottom: 1.5px solid currentColor;
+			transform: rotate(-45deg);
+			transition: transform var(--dur-base) ease;
+		}
+
+		&:hover {
+			color: var(--color-text);
+		}
+	}
+
+	&[open] summary::before {
+		transform: rotate(45deg);
+	}
+
+	.table-scroll {
+		max-height: 260px;
+		margin-top: var(--space-2);
+		overflow: auto;
+		border-radius: var(--radius-sm);
+		background: var(--color-bg);
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-variant-numeric: tabular-nums;
+	}
+
+	th,
+	td {
+		padding: 6px var(--space-3);
+		text-align: right;
+		white-space: nowrap;
+		border-bottom: 1px solid var(--color-border);
+
+		&:first-child {
+			text-align: left;
+		}
+	}
+
+	th {
+		position: sticky;
+		top: 0;
+		background: var(--color-bg);
+		color: var(--color-text-muted);
+		font-weight: 600;
+	}
+
+	td {
+		color: var(--color-text-body);
+	}
+}
+
+// Packet loss bar ---------------------------------------------------------------
+
+.loss {
+	display: grid;
+	gap: var(--space-4);
+	margin-top: var(--space-2);
+}
+
+.loss-value {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-1);
+
+	.num {
+		color: var(--color-text);
+		font-size: 2rem;
+		font-weight: 700;
+		letter-spacing: -0.035em;
+		font-variant-numeric: tabular-nums;
+
+		&.muted {
+			color: var(--color-text-muted);
+			font-size: var(--text-lg);
+			letter-spacing: var(--tracking-tight);
+		}
+	}
+
+	.unit {
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+		font-weight: 500;
+	}
+}
+
+.loss-bar {
+	display: flex;
+	gap: 2px;
+	height: 10px;
+}
+
+.loss-received,
+.loss-lost {
+	display: block;
+	border-radius: 4px;
+}
+
+.loss-received {
+	background: var(--color-text-muted);
+}
+
+.loss-lost {
+	background: var(--status-poor-fg);
+}
+
+.loss-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-6);
+	margin: 0;
+	font-size: var(--text-sm);
+
+	> div {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+	}
+
+	dt {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		color: var(--color-text-muted);
+	}
+
+	dd {
+		margin: 0;
+		color: var(--color-text);
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.swatch {
+		width: 10px;
+		height: 10px;
+		border-radius: 3px;
+	}
+}
+
+.loss-unavailable p {
+	font-size: var(--text-sm);
+	max-width: 40ch;
+}
+
+.chart-note {
+	margin-top: var(--space-2);
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+}
