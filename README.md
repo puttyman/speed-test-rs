@@ -1,90 +1,82 @@
-<picture>
-    <source srcset="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_Solid_White.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_RGB.svg" alt="Leptos Logo">
-</picture>
+# speed-test-rs
 
-# Leptos Axum Starter Template
+A self-hosted, [Cloudflare-style](https://speed.cloudflare.com) network speed test for your
+**local network**, built in Rust with [Leptos](https://github.com/leptos-rs/leptos) and
+[Axum](https://github.com/tokio-rs/axum).
 
-This is a template for use with the [Leptos](https://github.com/leptos-rs/leptos) web framework and the [cargo-leptos](https://github.com/akesson/cargo-leptos) tool using [Axum](https://github.com/tokio-rs/axum).
+Run it in Docker on a machine in your home or office, then open it from any phone or laptop to
+measure the link to that machine: download, upload, latency, jitter, latency under load and
+packet loss. Label each run with the room or access point and compare them in the history.
 
-## Creating your template repo
+> **Status: early development.** The project skeleton builds and runs, and the measurement
+> engine is being built. See [`docs/SPEC.md`](docs/SPEC.md) for the full design and roadmap.
 
-If you don't have `cargo-leptos` installed you can install it with
+## How it works
+
+- Measurements run over **WebSocket** by default. An HTTP mode, using the same method as
+  Cloudflare, is available for cross-checking.
+- Packet loss is measured over a real UDP **WebRTC data channel** served by the app itself.
+  No external TURN server is needed.
+- Results are scored with Cloudflare's AIM model (streaming, gaming, video chat) and saved to
+  SQLite for history and comparison.
+- Nothing leaves your network: no telemetry and no external assets.
+
+## Quick start (Docker)
 
 ```bash
-cargo install cargo-leptos
+docker compose up -d --build
+# or
+docker build -t speed-test-rs .
+docker run -d -p 8080:8080 --name speed-test speed-test-rs
 ```
 
-Then run
-```bash
-cargo leptos new --git leptos-rs/start-axum
-```
+Then open `http://<server-ip>:8080`.
 
-to generate a new project template.
+## Development
 
-```bash
-cd leptops-axum
-```
-
-to go to your newly created project.  
-Feel free to explore the project structure, but the best place to start with your application code is in `src/app.rs`.  
-Addtionally, Cargo.toml may need updating as new versions of the dependencies are released, especially if things are not working after a `cargo update`.
-
-## Running your project
+Requirements: stable Rust (1.85 or newer) and `cargo-leptos`. `cargo-leptos` downloads `sass`
+and `wasm-bindgen` automatically.
 
 ```bash
-cargo leptos watch
-```
+rustup target add wasm32-unknown-unknown
+cargo install cargo-leptos --locked
 
-## Installing Additional Tools
-
-By default, `cargo-leptos` uses `nightly` Rust, `cargo-generate`, and `sass`. If you run into any trouble, you may need to install one or more of these tools.
-
-1. `rustup toolchain install nightly --allow-downgrade` - make sure you have Rust nightly
-2. `rustup target add wasm32-unknown-unknown` - add the ability to compile Rust to WebAssembly
-3. `cargo install cargo-generate` - install `cargo-generate` binary (should be installed automatically in future)
-4. `npm install -g sass` - install `dart-sass` (should be optional in future
-
-## Compiling for Release
-```bash
+cargo leptos watch          # dev server with hot reload on http://127.0.0.1:3000
 cargo leptos build --release
 ```
 
-Will generate your server binary in target/server/release and your site package in target/site
+The release build writes the server binary to `target/release/speed-test-rs` and the static
+site to `target/site`.
 
-## Testing Your Project
-```bash
-cargo leptos end-to-end
-```
+### Tests
 
 ```bash
-cargo leptos end-to-end --release
+cargo clippy --features ssr -- -D warnings
+cargo clippy --lib --target wasm32-unknown-unknown --features hydrate -- -D warnings
+
+cd end2end && npm install && cd ..
+cargo leptos end-to-end     # Playwright tests
 ```
 
-Cargo-leptos uses Playwright as the end-to-end test tool.  
-Tests are located in end2end/tests directory.
+### Configuration
 
-## Executing a Server on a Remote Machine Without the Toolchain
-After running a `cargo leptos build --release` the minimum files needed are:
+| Variable | Default | Description |
+|---|---|---|
+| `LEPTOS_SITE_ADDR` | `127.0.0.1:3000` (`0.0.0.0:8080` in Docker) | Listen address |
+| `LEPTOS_SITE_ROOT` | `target/site` (`site` in Docker) | Static site directory |
 
-1. The server binary located in `target/server/release`
-2. The `site` directory and all files within located in `target/site`
+More options (UDP port, database path, auth token and others) are listed in
+[`docs/SPEC.md` §9](docs/SPEC.md#9-configuration) and will be added as the features land.
 
-Copy these files to your remote server. The directory structure should be:
-```text
-leptops-axum
-site/
-```
-Set the following environment variables (updating for your project as needed):
-```text
-LEPTOS_OUTPUT_NAME="leptops-axum"
-LEPTOS_SITE_ROOT="site"
-LEPTOS_SITE_PKG_DIR="pkg"
-LEPTOS_SITE_ADDR="127.0.0.1:3000"
-LEPTOS_RELOAD_PORT="3001"
-```
-Finally, run the server binary.
+## License
 
-## Licensing
+Licensed under either of
 
-This template itself is released under the Unlicense. You should replace the LICENSE for your own application with an appropriate license if you plan to release it publicly.
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
+in this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
+without any additional terms or conditions.

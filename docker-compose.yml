@@ -1,0 +1,8 @@
+services:
+  speed-test:
+    build: .
+    image: speed-test-rs:latest
+    container_name: speed-test-rs
+    restart: unless-stopped
+    ports:
+      - "8080:8080"

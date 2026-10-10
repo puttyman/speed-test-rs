@@ -1,0 +1,6 @@
+target
+end2end/node_modules
+end2end/playwright-report
+end2end/test-results
+.git
+docs
