@@ -5,7 +5,7 @@ edition = "2024"
 description = "Self-hosted, Cloudflare-style network speed test for your LAN, built with Leptos and Axum"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/puttyman/speed-test-rs"
-rust-version = "1.89"
+rust-version = "1.94"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -38,6 +38,9 @@ qrcode = { version = "0.14", default-features = false, optional = true }
 rust-embed = { version = "8.13", features = ["interpolate-folder-path"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
 socket2 = { version = "0.6", optional = true }
+# Bundled SQLite (compiled in, no system libsqlite3). Runtime-checked queries only, so no
+# DATABASE_URL is needed at build time.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "macros"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "sync", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
@@ -49,6 +52,7 @@ flate2 = { version = "1.1", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1"
+tempfile = "3.27"
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = "0.30"
 reqwest = { version = "0.13", default-features = false }
@@ -80,6 +84,7 @@ ssr = [
     "dep:qrcode",
     "dep:rustls",
     "dep:socket2",
+    "dep:sqlx",
     "dep:tokio",
     "dep:tracing",
     "dep:tracing-subscriber",

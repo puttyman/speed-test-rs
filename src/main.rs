@@ -41,7 +41,7 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(feature = "ssr")]
 async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
-    use speed_test_rs::server::{AppState, assets, listen, router, startup};
+    use speed_test_rs::server::{AppState, assets, listen, router, startup, storage};
 
     startup::init_logging(&config);
 
@@ -64,7 +64,10 @@ async fn serve(config: speed_test_rs::server::Config) -> Result<(), String> {
         None => None,
     };
 
-    let state = AppState::new(config);
+    let mut state = AppState::new(config);
+    state.storage = storage::Storage::from_config(&state.config)
+        .await
+        .map_err(|e| format!("cannot open the history database: {e}"))?;
     if assets::embedded_wasm_present(&state.leptos.output_name) == Some(false) {
         tracing::warn!(
             "the embedded site has no pkg/{}.wasm; the page will not hydrate",

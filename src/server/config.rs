@@ -207,6 +207,9 @@ pub struct Config {
     pub history: bool,
     /// Auto-prune runs older than this many days.
     pub retention_days: Option<u32>,
+    /// Store the client IP and User-Agent with each run (`SPEEDTEST_STORE_CLIENT_INFO`, env
+    /// only; default on).
+    pub store_client_info: bool,
     /// Maximum concurrent test sessions.
     pub max_sessions: usize,
     /// Per-request byte cap.
@@ -290,6 +293,7 @@ impl Config {
         let presence = !args.no_presence && env_bool(&env, "SPEEDTEST_PRESENCE")?.unwrap_or(true);
 
         let retention_days = flag_or_env(args.retention_days, &env, "SPEEDTEST_RETENTION_DAYS")?;
+        let store_client_info = env_bool(&env, "SPEEDTEST_STORE_CLIENT_INFO")?.unwrap_or(true);
         let max_sessions = flag_or_env(args.max_sessions, &env, "SPEEDTEST_MAX_SESSIONS")?
             .unwrap_or(DEFAULT_MAX_SESSIONS);
         if max_sessions == 0 {
@@ -320,6 +324,7 @@ impl Config {
             db_path,
             history,
             retention_days,
+            store_client_info,
             max_sessions,
             max_bytes,
             auth_token,
