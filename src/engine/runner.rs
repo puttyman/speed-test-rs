@@ -456,7 +456,7 @@ impl Run<'_> {
         let main = async {
             let mut done = 0;
             for _ in 0..count {
-                if ramp.time_up(self.elapsed()) {
+                if ramp.time_up_for(step, self.elapsed()) {
                     break;
                 }
                 let s = self.request(dir, bytes, streams, bypass).await?;

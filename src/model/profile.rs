@@ -197,54 +197,47 @@ impl Profile {
     /// Names of the built-in profiles.
     pub const BUILTIN: [&'static str; 4] = ["quick", "standard", "extended", "concurrent"];
 
-    /// The default profile (SPEC §5.3, 17 steps incl. the LAN extension).
+    /// The default profile (SPEC §5.3, 17 steps incl. the LAN extension), in four blocks:
+    /// idle latency, every download size (smallest first), every upload size, then packet
+    /// loss. Sizes and counts match Cloudflare's sequence; only the order differs.
     pub fn standard() -> Self {
+        let mut steps = Self::latency_steps();
+        steps.extend(Self::download_steps());
+        steps.extend(Self::upload_steps());
+        steps.push(Step::default_packet_loss());
         Profile {
             name: "standard".into(),
-            steps: vec![
-                Step::Latency { num_packets: 1 },
-                Step::Download {
-                    bytes: KB100,
-                    count: 1,
-                    bypass_min_duration: true,
-                    streams: None,
-                },
-                Step::Latency { num_packets: 20 },
-                Step::download(KB100, 9),
-                Step::download(MB1, 8),
-                Step::upload(KB100, 8),
-                Step::default_packet_loss(),
-                Step::upload(MB1, 6),
-                Step::download(MB10, 6),
-                Step::upload(MB10, 4),
-                Step::download(MB25, 4),
-                Step::upload(MB25, 4),
-                Step::download(MB100, 3),
-                Step::upload(MB50, 3),
-                Step::download(MB250, 2),
-                Step::download(GB1, 2),
-                Step::upload(MB250, 2),
-            ],
+            steps,
         }
     }
 
-    /// Phases 1–6 and 8 of `standard` (about 5 s, no packet loss).
+    /// Idle latency, downloads up to 1 MB, uploads up to 1 MB (about 5 s, no packet loss).
     pub fn quick() -> Self {
-        let std = Self::standard().steps;
+        let mut steps = Self::latency_steps();
+        steps.extend(
+            Self::download_steps()
+                .into_iter()
+                .filter(|s| s.bytes().is_some_and(|b| b <= MB1)),
+        );
+        steps.extend(
+            Self::upload_steps()
+                .into_iter()
+                .filter(|s| s.bytes().is_some_and(|b| b <= MB1)),
+        );
         Profile {
             name: "quick".into(),
-            steps: [0, 1, 2, 3, 4, 5, 7]
-                .iter()
-                .map(|&i| std[i].clone())
-                .collect(),
+            steps,
         }
     }
 
-    /// `standard` with 4 parallel streams for phases 13–17.
+    /// `standard` with 4 parallel streams for the large transfers (50 MB and up).
     pub fn extended() -> Self {
         let mut steps = Self::standard().steps;
-        for step in steps.iter_mut().skip(12) {
-            if let Step::Download { streams, .. } | Step::Upload { streams, .. } = step {
+        for step in &mut steps {
+            if let Step::Download { bytes, streams, .. } | Step::Upload { bytes, streams, .. } =
+                step
+                && *bytes >= MB50
+            {
                 *streams = Some(4);
             }
         }
@@ -252,6 +245,46 @@ impl Profile {
             name: "extended".into(),
             steps,
         }
+    }
+
+    /// One unloaded probe, then 20 idle latency probes.
+    fn latency_steps() -> Vec<Step> {
+        vec![
+            Step::Latency { num_packets: 1 },
+            Step::Latency { num_packets: 20 },
+        ]
+    }
+
+    /// Every download size, smallest first. The first 100 kB request warms the connection
+    /// and counts even if very short.
+    fn download_steps() -> Vec<Step> {
+        vec![
+            Step::Download {
+                bytes: KB100,
+                count: 1,
+                bypass_min_duration: true,
+                streams: None,
+            },
+            Step::download(KB100, 9),
+            Step::download(MB1, 8),
+            Step::download(MB10, 6),
+            Step::download(MB25, 4),
+            Step::download(MB100, 3),
+            Step::download(MB250, 2),
+            Step::download(GB1, 2),
+        ]
+    }
+
+    /// Every upload size, smallest first.
+    fn upload_steps() -> Vec<Step> {
+        vec![
+            Step::upload(KB100, 8),
+            Step::upload(MB1, 6),
+            Step::upload(MB10, 4),
+            Step::upload(MB25, 4),
+            Step::upload(MB50, 3),
+            Step::upload(MB250, 2),
+        ]
     }
 
     /// The time-based group profile (SPEC §5.11): 3 s idle latency, 10 s
@@ -311,6 +344,9 @@ pub struct Config {
     pub bandwidth_percentile: f64,
     /// Cap on measurement time for one test.
     pub max_test_ms: u64,
+    /// Time budget for each direction's size-based transfers, so a slow download can't
+    /// use up the time the upload needs.
+    pub max_direction_ms: u64,
     /// Default parallel streams.
     pub streams: u8,
 }
@@ -326,6 +362,7 @@ impl Default for Config {
             latency_percentile: 0.5,
             bandwidth_percentile: 0.9,
             max_test_ms: 60_000,
+            max_direction_ms: 25_000,
             streams: 1,
         }
     }
@@ -354,8 +391,12 @@ pub enum PhaseStatus {
 /// request size are skipped. The current step still runs to completion
 /// (unless the time cap hits).
 ///
+/// **Direction budget**: each direction's size-based transfers get
+/// `max_direction_ms`, counted from its first transfer step. Once used up, the
+/// rest of that direction is skipped (see [`time_up_for`](Self::time_up_for)).
+///
 /// **Time cap**: when `elapsed_ms >= max_test_ms`, every remaining step is
-/// skipped.
+/// skipped, except packet loss, which is short and bounded by its own timeouts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RampState {
     steps: Vec<Step>,
@@ -365,6 +406,9 @@ pub struct RampState {
     halt_upload: Option<u64>,
     finish_request_ms: f64,
     max_test_ms: f64,
+    max_direction_ms: f64,
+    download_started: Option<f64>,
+    upload_started: Option<f64>,
 }
 
 impl RampState {
@@ -377,6 +421,9 @@ impl RampState {
             halt_upload: None,
             finish_request_ms: config.bandwidth_finish_request_ms,
             max_test_ms: config.max_test_ms as f64,
+            max_direction_ms: config.max_direction_ms as f64,
+            download_started: None,
+            upload_started: None,
         }
     }
 
@@ -388,6 +435,21 @@ impl RampState {
     /// Whether the time cap has been reached.
     pub fn time_up(&self, elapsed_ms: f64) -> bool {
         elapsed_ms >= self.max_test_ms
+    }
+
+    /// Whether `step` must stop now: the overall time cap, or (for a size-based
+    /// transfer) its direction's budget.
+    pub fn time_up_for(&self, step: &Step, elapsed_ms: f64) -> bool {
+        self.time_up(elapsed_ms) || self.direction_budget_used(step, elapsed_ms)
+    }
+
+    fn direction_budget_used(&self, step: &Step, elapsed_ms: f64) -> bool {
+        let started = match step {
+            Step::Download { .. } => self.download_started,
+            Step::Upload { .. } => self.upload_started,
+            _ => return false,
+        };
+        started.is_some_and(|t| elapsed_ms - t >= self.max_direction_ms)
     }
 
     /// Whether `direction` has halted, and at which request size.
@@ -409,19 +471,30 @@ impl RampState {
     /// Returns `None` when the profile is finished or the time cap is reached
     /// (all remaining steps are then marked skipped).
     pub fn next_step(&mut self, elapsed_ms: f64) -> Option<(usize, &Step)> {
-        if self.time_up(elapsed_ms) {
-            self.skip_remaining();
-            return None;
-        }
+        let time_up = self.time_up(elapsed_ms);
         while self.cursor < self.steps.len() {
             let i = self.cursor;
             self.cursor += 1;
             if self.status[i].is_some() {
                 continue;
             }
-            if self.should_skip(&self.steps[i]) {
+            let step = &self.steps[i];
+            let exempt = matches!(step, Step::PacketLoss { .. });
+            if (time_up && !exempt)
+                || self.should_skip(step)
+                || self.direction_budget_used(step, elapsed_ms)
+            {
                 self.status[i] = Some(PhaseStatus::Skipped);
                 continue;
+            }
+            match step {
+                Step::Download { .. } => {
+                    self.download_started.get_or_insert(elapsed_ms);
+                }
+                Step::Upload { .. } => {
+                    self.upload_started.get_or_insert(elapsed_ms);
+                }
+                _ => {}
             }
             return Some((i, &self.steps[i]));
         }
@@ -485,54 +558,95 @@ mod tests {
             summary,
             vec![
                 (Latency, None, 1),
-                (Download, Some(100_000), 1),
                 (Latency, None, 20),
+                (Download, Some(100_000), 1),
                 (Download, Some(100_000), 9),
                 (Download, Some(1_000_000), 8),
-                (Upload, Some(100_000), 8),
-                (PacketLoss, None, 1000),
-                (Upload, Some(1_000_000), 6),
                 (Download, Some(10_000_000), 6),
-                (Upload, Some(10_000_000), 4),
                 (Download, Some(25_000_000), 4),
-                (Upload, Some(25_000_000), 4),
                 (Download, Some(100_000_000), 3),
-                (Upload, Some(50_000_000), 3),
                 (Download, Some(250_000_000), 2),
                 (Download, Some(1_000_000_000), 2),
+                (Upload, Some(100_000), 8),
+                (Upload, Some(1_000_000), 6),
+                (Upload, Some(10_000_000), 4),
+                (Upload, Some(25_000_000), 4),
+                (Upload, Some(50_000_000), 3),
                 (Upload, Some(250_000_000), 2),
+                (PacketLoss, None, 1000),
             ]
         );
-        assert!(p.steps[1].bypass_min_duration());
+        assert!(p.steps[2].bypass_min_duration());
         assert!(!p.steps[3].bypass_min_duration());
-        assert_eq!(p.steps[6], Step::default_packet_loss());
+        assert_eq!(p.steps[16], Step::default_packet_loss());
         assert!(p.steps.iter().all(|s| s.streams(&Config::default()) == 1));
     }
 
     #[test]
+    fn phases_come_in_blocks() {
+        // Latency, then all downloads, then all uploads, then packet loss: a phase never
+        // comes back once the next one has started.
+        for p in [Profile::quick(), Profile::standard(), Profile::extended()] {
+            let mut phases: Vec<Phase> = p.steps.iter().map(Step::phase).collect();
+            phases.dedup();
+            let expected: &[Phase] = if p.name == "quick" {
+                &[Phase::Latency, Phase::Download, Phase::Upload]
+            } else {
+                &[
+                    Phase::Latency,
+                    Phase::Download,
+                    Phase::Upload,
+                    Phase::PacketLoss,
+                ]
+            };
+            assert_eq!(phases, expected, "{}", p.name);
+            // Sizes grow within each direction.
+            for dir in [Direction::Download, Direction::Upload] {
+                let sizes: Vec<u64> = p
+                    .steps
+                    .iter()
+                    .filter(|s| s.direction() == Some(dir))
+                    .filter_map(Step::bytes)
+                    .collect();
+                assert!(sizes.windows(2).all(|w| w[0] <= w[1]), "{} {dir:?}", p.name);
+            }
+        }
+    }
+
+    #[test]
     fn quick_and_extended() {
-        let std = Profile::standard().steps;
         let q = Profile::quick();
         assert_eq!(q.name, "quick");
+        let summary: Vec<(Phase, Option<u64>, u32)> = q
+            .steps
+            .iter()
+            .map(|s| (s.phase(), s.bytes(), s.count()))
+            .collect();
+        use Phase::*;
         assert_eq!(
-            q.steps,
+            summary,
             vec![
-                std[0].clone(),
-                std[1].clone(),
-                std[2].clone(),
-                std[3].clone(),
-                std[4].clone(),
-                std[5].clone(),
-                std[7].clone()
+                (Latency, None, 1),
+                (Latency, None, 20),
+                (Download, Some(100_000), 1),
+                (Download, Some(100_000), 9),
+                (Download, Some(1_000_000), 8),
+                (Upload, Some(100_000), 8),
+                (Upload, Some(1_000_000), 6),
             ]
         );
 
         let e = Profile::extended();
         let cfg = Config::default();
-        for (i, s) in e.steps.iter().enumerate() {
-            let expected = if i >= 12 { 4 } else { 1 };
-            assert_eq!(s.streams(&cfg), expected, "step {}", i + 1);
+        for s in &e.steps {
+            let expected = if s.bytes().is_some_and(|b| b >= 50_000_000) {
+                4
+            } else {
+                1
+            };
+            assert_eq!(s.streams(&cfg), expected, "{s:?}");
         }
+        assert_eq!(e.steps.iter().filter(|s| s.streams(&cfg) == 4).count(), 5);
     }
 
     #[test]
@@ -671,13 +785,14 @@ mod tests {
         });
         assert_eq!(ramp.halted_at(Direction::Download), Some(10_000_000));
         assert_eq!(ramp.halted_at(Direction::Upload), None);
-        // Step 9 (10 MB down, index 8) ran to completion; 25 MB+ downloads skipped.
-        assert!(ran.contains(&8));
-        for i in [10, 12, 14, 15] {
+        // The 10 MB download (index 5) ran to completion; 25 MB+ downloads skipped.
+        assert!(ran.contains(&5));
+        for i in 6..=9 {
             assert_eq!(ramp.status(i), Some(PhaseStatus::Skipped), "step {}", i + 1);
             assert!(!ran.contains(&i));
         }
-        for i in [9, 11, 13, 16] {
+        // Every upload and the packet loss test still ran.
+        for i in 10..=16 {
             assert_eq!(ramp.status(i), Some(PhaseStatus::Done), "step {}", i + 1);
         }
     }
@@ -716,7 +831,9 @@ mod tests {
             };
             assert_eq!(ramp.status(i), Some(expected));
         }
-        assert!(last < 16);
+        // Transfers stopped at the cap; packet loss (exempt) still ran last.
+        assert_eq!(last, 16);
+        assert!((3..16).any(|i| ramp.status(i) == Some(PhaseStatus::Skipped)));
         assert_eq!(ramp.clone().next_step(0.0), None);
     }
 
@@ -731,5 +848,55 @@ mod tests {
         assert_eq!(r.status(0), Some(PhaseStatus::Failed));
         assert!((1..7).all(|i| r.status(i) == Some(PhaseStatus::Skipped)));
         assert!(r.is_finished());
+    }
+
+    #[test]
+    fn direction_budget_keeps_time_for_upload() {
+        let cfg = Config {
+            max_direction_ms: 1000,
+            ..Config::default()
+        };
+        let p = Profile::standard();
+        let mut r = RampState::new(&p, &cfg);
+        // Latency x2.
+        for _ in 0..2 {
+            let (i, _) = r.next_step(0.0).unwrap();
+            r.complete_step(i, PhaseStatus::Done);
+        }
+        // First download starts the download budget at t = 100 ms.
+        let (i, step) = r.next_step(100.0).unwrap();
+        let step = step.clone();
+        assert_eq!(step.direction(), Some(Direction::Download));
+        assert!(!r.time_up_for(&step, 1000.0));
+        assert!(r.time_up_for(&step, 1100.0));
+        r.complete_step(i, PhaseStatus::Done);
+        // Budget used: the remaining downloads are skipped, uploads still run.
+        let (i, step) = r.next_step(1200.0).unwrap();
+        assert_eq!(step.direction(), Some(Direction::Upload));
+        assert_eq!(step.bytes(), Some(100_000));
+        for j in 3..10 {
+            assert_eq!(r.status(j), Some(PhaseStatus::Skipped), "step {j}");
+        }
+        r.complete_step(i, PhaseStatus::Done);
+    }
+
+    #[test]
+    fn packet_loss_runs_after_the_time_cap() {
+        let cfg = Config {
+            max_test_ms: 1000,
+            ..Config::default()
+        };
+        let p = Profile::standard();
+        let mut r = RampState::new(&p, &cfg);
+        let (i, _) = r.next_step(0.0).unwrap();
+        r.complete_step(i, PhaseStatus::Done);
+        // Past the cap: every transfer is skipped, packet loss still runs.
+        let (i, step) = r.next_step(5000.0).unwrap();
+        assert_eq!(step.phase(), Phase::PacketLoss);
+        assert_eq!(i, 16);
+        r.complete_step(i, PhaseStatus::Done);
+        assert!(r.next_step(5000.0).is_none());
+        assert!(r.is_finished());
+        assert_eq!(r.status(1), Some(PhaseStatus::Skipped));
     }
 }

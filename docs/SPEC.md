@@ -143,39 +143,46 @@ adapted for WebSocket transport and LAN speeds.
 
 ### 5.3 Test sequence (default "standard" profile)
 
-The order mirrors Cloudflare's: latency first, then download and upload ramps that alternate,
-with packet loss in the middle.
+The test runs in four blocks, one phase at a time: **latency → download → upload → packet
+loss**. The sizes and counts are Cloudflare's; only the order differs. Cloudflare alternates
+download and upload, which made the hero and timeline jump back and forth.
 
 | # | Phase | Parameters |
 |---|---|---|
 | 1 | Latency (warm-up) | 1 probe |
-| 2 | Download (estimate) | 100 kB × 1, bypass min-duration |
-| 3 | Latency (idle) | 20 probes |
+| 2 | Latency (idle) | 20 probes |
+| 3 | Download (estimate) | 100 kB × 1, bypass min-duration |
 | 4 | Download | 100 kB × 9 |
 | 5 | Download | 1 MB × 8 |
-| 6 | Upload | 100 kB × 8 |
-| 7 | Packet loss | 1000 packets, batch 10, 10 ms between batches, 3000 ms wait |
-| 8 | Upload | 1 MB × 6 |
-| 9 | Download | 10 MB × 6 |
-| 10 | Upload | 10 MB × 4 |
-| 11 | Download | 25 MB × 4 |
-| 12 | Upload | 25 MB × 4 |
-| 13 | Download | 100 MB × 3 |
-| 14 | Upload | 50 MB × 3 |
-| 15 | Download | 250 MB × 2 |
-| 16 | Download *(LAN extension)* | 1 GB × 2 |
-| 17 | Upload *(LAN extension)* | 250 MB × 2 |
+| 6 | Download | 10 MB × 6 |
+| 7 | Download | 25 MB × 4 |
+| 8 | Download | 100 MB × 3 |
+| 9 | Download | 250 MB × 2 |
+| 10 | Download *(LAN extension)* | 1 GB × 2 |
+| 11 | Upload | 100 kB × 8 |
+| 12 | Upload | 1 MB × 6 |
+| 13 | Upload | 10 MB × 4 |
+| 14 | Upload | 25 MB × 4 |
+| 15 | Upload | 50 MB × 3 |
+| 16 | Upload *(LAN extension)* | 250 MB × 2 |
+| 17 | Packet loss | 1000 packets, batch 10, 10 ms between batches, 3000 ms wait |
 
 **Ramp halting** (as in Cloudflare): within one direction, once any request in a size set takes
 ≥ `bandwidth_finish_request_ms` (default **1000 ms**), larger sizes in that direction are
 skipped. A slow Wi-Fi client stops early. A multi-gig wired client continues to the 1 GB steps.
 
-**Time cap**: one test is capped at **60 s** of measurement time (configurable). When the
-cap is reached, the remaining phases are skipped and marked `skipped` in the result.
+**Direction budget**: download and upload each get **25 s** of size-based transfers
+(`max_direction_ms`), counted from their first transfer. When it runs out, the rest of that
+direction is skipped, so a slow download can never use up the upload's time.
 
-**Profiles**: `quick` (phases 1–6 and 8, about 5 s), `standard` (default), `extended`
-(standard plus 4 parallel streams for phases 13–17). Profiles are defined as data in
-`model::profile`, so a custom JSON sequence can be passed through the API.
+**Time cap**: one test is capped at **60 s** of measurement time (configurable). When the
+cap is reached, the remaining transfers are skipped and marked `skipped` in the result.
+Packet loss still runs: it's short and bounded by its own timeouts.
+
+**Profiles**: `quick` (latency, then downloads and uploads up to 1 MB, about 5 s; no packet
+loss), `standard` (default), `extended` (standard plus 4 parallel streams for the transfers
+of 50 MB and up). Profiles are defined as data in `model::profile`, so a custom JSON sequence
+can be passed through the API.
 
 ### 5.4 Latency and jitter (idle)
 

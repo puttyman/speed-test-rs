@@ -716,8 +716,11 @@ mod tests {
                 status: PhaseStatus::Done
             }
         );
-        assert_eq!(recs[1].bytes, Some(100_000));
+        // The second step (20 idle probes) hasn't run yet.
+        assert_eq!(recs[1].kind, Phase::Latency);
+        assert_eq!(recs[1].count, 20);
         assert_eq!(recs[1].status, PhaseStatus::Skipped);
+        assert_eq!(recs[2].bytes, Some(100_000));
     }
 
     fn sample_run() -> RunResult {
