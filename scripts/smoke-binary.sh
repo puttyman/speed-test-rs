@@ -132,12 +132,24 @@ else
     fail "healthcheck with SPEEDTEST_LISTEN exited non-zero"
 fi
 
-kill "$pid"
-if wait "$pid"; then
-    pass "graceful shutdown"
-else
-    fail "server exited with status $? on SIGTERM"
-fi
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        # Windows has no SIGTERM: Git Bash's `kill` force-terminates the process, which always
+        # reports 143. The server shuts down gracefully on Ctrl+C there (tokio::signal::ctrl_c),
+        # which a script can't deliver to a background process, so only stop it.
+        kill "$pid"
+        wait "$pid" 2>/dev/null || true
+        echo "skip graceful shutdown (no SIGTERM on Windows)"
+        ;;
+    *)
+        kill "$pid"
+        if wait "$pid"; then
+            pass "graceful shutdown"
+        else
+            fail "server exited with status $? on SIGTERM"
+        fi
+        ;;
+esac
 pid=""
 
 if [[ "$failures" -ne 0 ]]; then
