@@ -8,11 +8,17 @@ A free, self-hosted speed test for your home or office network. Run it on any ma
 
 - **Download, upload, latency, jitter and packet loss**, plus latency under load ("bufferbloat") and a rating for streaming, gaming and video calls.
 - **See every connected device**, live, with its current download or upload speed.
-- **Test together**: a synchronised test on several devices at once, with the total bandwidth and how fairly it was shared.
+- **Test together**: a synchronised test on several devices at once, so you see what your network delivers when it's busy: total bandwidth, each device's share, and how fairly it was split.
 - **History and compare**: every run is saved under a label like "Kitchen" or "Office desk".
 - **Small and private**: one static binary in a distroless image, runs as non-root, no accounts, no cloud, no external fonts or CDN.
 
 ![Devices panel showing other devices' live speeds](https://raw.githubusercontent.com/puttyman/speed-test-rs/main/docs/screenshots/devices.png)
+
+### Test together
+
+Most speed tests measure one device. Real networks are shared. Open the page on several devices, press **Test together** on one, tap **Join** on the others, and after a shared countdown they all download and then upload at the same moment. The server measures every device itself and shows the total, each device's share, and whether the split was fair.
+
+![Test together result](https://raw.githubusercontent.com/puttyman/speed-test-rs/main/docs/screenshots/test-together.png)
 
 ## Quick start
 

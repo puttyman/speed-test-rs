@@ -7,18 +7,35 @@ A free, self-hosted speed test for your home or office network. Run it on any ma
 ## Features
 
 - **Download, upload, latency, jitter and packet loss**, plus latency under load ("bufferbloat") and a rating for streaming, gaming and video calls.
+- **Test together** (multi-device): see below.
 - **See every connected device.** Each open browser shows up live with its name and its current download or upload speed.
-- **Test together.** Start a synchronised test on several devices at once and see the total bandwidth and how fairly it was shared.
 - **History and compare.** Every run is saved under a label like "Kitchen" or "Office desk", so you can compare rooms, routers or before/after changes.
 - **Runs anywhere.** One small binary for Linux, macOS, Windows and Raspberry Pi, or a Docker image. No accounts, no cloud, no external fonts or CDN.
 - **Installable** as an app on phones (PWA), with light and dark themes.
 
+## Test together: load your network from many devices at once
+
+Most speed tests measure one device. Real networks are shared: the TV is streaming, a laptop is on a call and a phone is uploading photos. **Test together** runs a synchronised test on every device you choose, at the same moment, and shows what your network delivers when it is busy.
+
+1. Open the page on each device. They appear in the **Devices** panel with their live speeds.
+2. On one device, press **Test together**. The others get an invite and tap **Join**.
+3. The organizer presses **Start**. After a shared 3-2-1 countdown, every device downloads and then uploads at full speed at the same time.
+4. The result shows the **total bandwidth**, **each device's share**, whether the split was **even or uneven**, latency under load per device, and a warning when the server's own link is the bottleneck.
+
+The speeds come from the server's own byte counters, so they're consistent across devices. Use it to find out whether your router shares bandwidth fairly, how a mesh node holds up with several clients, or what's left for gaming while the house is streaming.
+
+<p>
+  <img src="docs/screenshots/test-together-invite.png" alt="Another device invites this one to test together; three devices are listed" width="49%">
+  <img src="docs/screenshots/test-together.png" alt="Test together result: total download and upload, each device's share and how evenly it was split" width="49%">
+</p>
+
+## Screenshots
+
 <p>
   <img src="docs/screenshots/devices.png" alt="Devices panel: two other devices uploading, with their live speeds" width="49%">
-  <img src="docs/screenshots/test-together.png" alt="Test together result: total speed and each device's share" width="49%">
+  <img src="docs/screenshots/history.png" alt="History grouped by label" width="49%">
 </p>
 <p>
-  <img src="docs/screenshots/history.png" alt="History grouped by label" width="49%">
   <img src="docs/screenshots/compare-dark.png" alt="Comparing three rooms in the dark theme" width="49%">
 </p>
 
