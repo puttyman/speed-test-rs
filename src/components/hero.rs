@@ -59,7 +59,7 @@ pub fn Hero(
                         // solid bar at hero size.
                         let format = move |v: Option<f64>| match v {
                             None if idle.get() => ("0".to_string(), k.format(Some(0.0), ui.units.get()).1),
-                            None => ("···".to_string(), k.format(Some(0.0), ui.units.get()).1),
+                            None => ("···".to_string(), String::new()),
                             v => k.format(v, ui.units.get()),
                         };
                         view! { <CountUp value=value format=format/> }
