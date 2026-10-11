@@ -191,6 +191,7 @@ variables count as unset.
 | `--max-bytes <N>` | `SPEEDTEST_MAX_BYTES` | `2000000000` | Largest single download or upload request, in bytes. |
 | `--no-presence` | `SPEEDTEST_PRESENCE=false` | presence on | Turn off the live Devices panel and group tests. |
 | `--server-link-mbps <N>` | `SPEEDTEST_SERVER_LINK_MBPS` | auto (Linux) | The server's link speed, for the "server may be the bottleneck" warning. |
+| `--group-test-seconds <N>` | `SPEEDTEST_GROUP_TEST_SECONDS` | `10` | Seconds of download and of upload in a Test together run (2–300). |
 | `--tls-cert <FILE>` | `SPEEDTEST_TLS_CERT` | – | PEM certificate (chain). Together with `--tls-key` it turns on HTTPS. |
 | `--tls-key <FILE>` | `SPEEDTEST_TLS_KEY` | – | PEM private key. |
 | `--tls-listen <ADDR>` | `SPEEDTEST_TLS_LISTEN` | `0.0.0.0:8443` and `[::]:8443` | HTTPS/WSS listen address, next to the plain HTTP one. Needs a certificate. |

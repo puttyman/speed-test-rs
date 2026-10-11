@@ -2,7 +2,7 @@
 //! server on an ephemeral port, driven by `tokio-tungstenite` and `reqwest` clients.
 //!
 //! Run with `cargo test --features ssr --test presence`. The group tests run the full
-//! 25 s `concurrent` plan, so this file takes about half a minute.
+//! short `concurrent` plan (`GROUP_SECONDS` per direction, about 9.5 s), to keep CI fast.
 
 #![cfg(feature = "ssr")]
 
@@ -27,6 +27,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use uuid::Uuid;
 
+/// Seconds of download and of upload in the group tests here (production default: 10).
+const GROUP_SECONDS: u32 = 4;
+
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 struct Server {
@@ -42,6 +45,7 @@ impl Server {
             no_presence: !presence,
             no_history: !history,
             server_link_mbps: Some(10_000),
+            group_test_seconds: Some(GROUP_SECONDS),
             ..ServeArgs::default()
         };
         let config = Config::resolve(args, |_| None).expect("valid config");
@@ -596,34 +600,43 @@ async fn group_test_measures_concurrent_transfers() {
                 _ => None,
             })
             .await;
-        assert_eq!(start, (3000, Profile::concurrent()));
+        assert_eq!(start, (3000, Profile::concurrent_for(GROUP_SECONDS * 1000)));
         starts.push(at);
     }
     a.update(GroupState::Running).await;
 
     // Charlie drops out during the test; Alpha and Bravo transfer at controlled rates:
     // download 0.5 / 1 MB per 100 ms (40 / 80 Mbps), upload 0.25 / 0.5 MB (20 / 40 Mbps).
+    // Windows follow the plan: latency, download, pause, upload.
+    let plan = Profile::concurrent_for(GROUP_SECONDS * 1000);
+    let d: Vec<u64> = plan
+        .steps
+        .iter()
+        .map(|s| u64::from(s.duration_ms().unwrap()))
+        .collect();
+    let (down_start, down_end) = (d[0], d[0] + d[1]);
+    let (up_start, up_end) = (down_end + d[2], down_end + d[2] + d[3]);
     let t0 = starts[0] + Duration::from_millis(3000);
     let ms = |n: u64| t0 + Duration::from_millis(n);
     let mut da = server.open(Role::Data, a.session, "Alpha").await;
     let mut db = server.open(Role::Data, b.session, "Bravo").await;
     let drop_c = async {
-        sleep_until(ms(5000)).await;
+        sleep_until(ms(down_start + 500)).await;
         c.sink.close().await.unwrap();
     };
     let run_a = async {
-        paced(&mut da, true, 500_000, ms(3000), ms(13_000)).await;
-        paced(&mut da, false, 250_000, ms(15_000), ms(25_000)).await;
+        paced(&mut da, true, 500_000, ms(down_start), ms(down_end)).await;
+        paced(&mut da, false, 250_000, ms(up_start), ms(up_end)).await;
     };
     let run_b = async {
-        paced(&mut db, true, 1_000_000, ms(3000), ms(13_000)).await;
-        paced(&mut db, false, 500_000, ms(15_000), ms(25_000)).await;
+        paced(&mut db, true, 1_000_000, ms(down_start), ms(down_end)).await;
+        paced(&mut db, false, 500_000, ms(up_start), ms(up_end)).await;
     };
     tokio::join!(run_a, run_b, drop_c);
-    sleep_until(ms(25_100)).await;
+    sleep_until(ms(up_end + 100)).await;
 
     // The members post their runs: loaded latency for the result, group_id for history.
-    let run = minimal_run("concurrent", 25_000, 0);
+    let run = minimal_run("concurrent", up_end, 0);
     let run_a = post_run(&server, Some(a.session), &run).await;
     let run_b = post_run(&server, Some(b.session), &run).await;
 
@@ -641,7 +654,7 @@ async fn group_test_measures_concurrent_transfers() {
     .await;
 
     assert_eq!(result.group_id, group);
-    assert_eq!(result.window_ms, 25_000);
+    assert_eq!(result.window_ms, up_end);
     assert_eq!(result.members.len(), 3);
     let member = |name: &str| {
         result

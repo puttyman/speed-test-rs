@@ -14,7 +14,8 @@
 //!    starting group, the group is `Cancelled`. Once the group is `Running`, a member who
 //!    leaves (host included) is only marked incomplete, so the others' measurement survives.
 //! 4. `GroupStart` (host only, `Conflict` otherwise; at least [`MIN_MEMBERS`] members) →
-//!    every member gets `GroupStart{group, starts_in_ms: 3000, plan: Profile::concurrent()}`
+//!    every member gets `GroupStart{group, starts_in_ms: 3000, plan}` (`Profile::concurrent_for`
+//!    with `--group-test-seconds`, default 10 s per direction)
 //!    and `GroupUpdate{state: Starting}`; at the start instant the state becomes `Running`
 //!    (another `GroupUpdate`).
 //! 5. During the plan the server samples every member session's byte counters every
@@ -139,6 +140,8 @@ struct Inner {
     registry: SessionRegistry,
     enabled: bool,
     server_link_mbps: Option<u32>,
+    /// The plan every new group runs (`--group-test-seconds`).
+    plan: Profile,
     groups: Mutex<HashMap<Uuid, Group>>,
 }
 
@@ -173,6 +176,7 @@ impl Groups {
                 registry,
                 enabled: config.presence,
                 server_link_mbps: config.server_link_mbps,
+                plan: Profile::concurrent_for(config.group_test_seconds * 1000),
                 groups: Mutex::new(HashMap::new()),
             }),
         }
@@ -321,7 +325,7 @@ impl Groups {
             start_at: None,
             plan_end: None,
             done_at: None,
-            plan: Profile::concurrent(),
+            plan: self.inner.plan.clone(),
             reports: HashMap::new(),
             task: None,
         };

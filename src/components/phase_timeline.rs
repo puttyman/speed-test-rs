@@ -71,6 +71,16 @@ pub fn timeline(
                 };
             }
             let status = |i: usize| statuses.get(i).copied().flatten();
+            // Phases run in blocks (SPEC §5.3): once a later step has started, this phase is
+            // over, and steps that never reported (skipped by ramp halting or the time
+            // budget) count as skipped.
+            let last = idx[idx.len() - 1];
+            let passed = current.is_some_and(|c| c > last)
+                || statuses.iter().skip(last + 1).any(Option::is_some);
+            let status = |i: usize| match status(i) {
+                None if passed => Some(PhaseStatus::Skipped),
+                s => s,
+            };
             let finished = idx.iter().filter(|&&i| status(i).is_some()).count();
             let all_skipped = idx.iter().all(|&i| status(i) == Some(PhaseStatus::Skipped));
             let running_here = current.is_some_and(|c| idx.contains(&c) && status(c).is_none());
@@ -162,7 +172,7 @@ mod tests {
     #[test]
     fn progress_fills_the_active_group() {
         let steps = Profile::quick().steps;
-        // quick: latency, download, latency, download, download, upload, upload
+        // quick: latency, latency, download x3, upload x2
         let mut statuses = vec![None; steps.len()];
         statuses[0] = Some(PhaseStatus::Done);
         statuses[1] = Some(PhaseStatus::Done);
@@ -173,6 +183,22 @@ mod tests {
         assert_eq!(t[0].fill, 1.0);
         // 1 of 3 download steps done + half of the current one.
         assert!((t[1].fill - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn passed_phase_is_complete_even_with_unreported_steps() {
+        let steps = Profile::standard().steps;
+        // Latency done, two downloads done; the larger downloads were skipped by ramp
+        // halting and never reported. Upload (index 10) is running.
+        let mut statuses = vec![None; steps.len()];
+        for s in statuses.iter_mut().take(5) {
+            *s = Some(PhaseStatus::Done);
+        }
+        let t = timeline(&steps, &statuses, Some(10), 0.0);
+        use StepState::*;
+        assert_eq!(states(&t), vec![Done, Done, Active, Pending]);
+        assert_eq!(t[1].fill, 1.0);
+        assert_eq!(t[2].fill, 0.0);
     }
 
     #[test]

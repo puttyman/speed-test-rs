@@ -43,6 +43,8 @@ pub fn Hero(
                 <p
                     class="hero-value"
                     class:is-idle=move || idle.get()
+                    // Running, but no value yet (e.g. packet loss in progress).
+                    class:is-pending=move || !idle.get() && value.with(Option::is_none)
                     style=move || {
                         let n = vt_name.get();
                         (!n.is_empty()).then(|| format!("view-transition-name:{n}"))
@@ -52,9 +54,12 @@ pub fn Hero(
                     // across units.
                     {move || {
                         let k = kind.get();
-                        // Idle shows a calm muted 0 rather than a placeholder dash.
+                        // Idle shows a calm muted 0, and a running phase without a value
+                        // yet shows "···"; never a placeholder dash, which renders as a
+                        // solid bar at hero size.
                         let format = move |v: Option<f64>| match v {
                             None if idle.get() => ("0".to_string(), k.format(Some(0.0), ui.units.get()).1),
+                            None => ("···".to_string(), k.format(Some(0.0), ui.units.get()).1),
                             v => k.format(v, ui.units.get()),
                         };
                         view! { <CountUp value=value format=format/> }

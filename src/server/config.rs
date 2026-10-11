@@ -23,6 +23,8 @@ pub const DEFAULT_UDP_PORT: u16 = 3478;
 pub const DEFAULT_MAX_SESSIONS: usize = 16;
 /// Default per-request byte cap.
 pub const DEFAULT_MAX_BYTES: u64 = 2_000_000_000;
+/// Default seconds per direction of a Test together run.
+pub const DEFAULT_GROUP_TEST_SECONDS: u32 = 10;
 /// Default log filter.
 pub const DEFAULT_LOG: &str = "info";
 /// Directory name used under the platform data directory.
@@ -118,6 +120,11 @@ pub struct ServeArgs {
     /// [env: SPEEDTEST_SERVER_LINK_MBPS] [default: auto (Linux)]
     #[arg(long, value_name = "N")]
     pub server_link_mbps: Option<u32>,
+
+    /// Seconds of download and of upload in a Test together run (2–300).
+    /// [env: SPEEDTEST_GROUP_TEST_SECONDS] [default: 10]
+    #[arg(long, value_name = "N")]
+    pub group_test_seconds: Option<u32>,
 
     /// Open the UI in the default browser after startup.
     #[arg(long)]
@@ -220,6 +227,8 @@ pub struct Config {
     pub presence: bool,
     /// Server link speed in Mbps; `None` = auto-detect.
     pub server_link_mbps: Option<u32>,
+    /// Seconds of download and of upload in a Test together run.
+    pub group_test_seconds: u32,
     /// Open the UI in the default browser after startup.
     pub open: bool,
     /// Print a QR code of the first LAN URL at startup.
@@ -303,6 +312,15 @@ impl Config {
             flag_or_env(args.max_bytes, &env, "SPEEDTEST_MAX_BYTES")?.unwrap_or(DEFAULT_MAX_BYTES);
         let server_link_mbps =
             flag_or_env(args.server_link_mbps, &env, "SPEEDTEST_SERVER_LINK_MBPS")?;
+        let group_test_seconds = flag_or_env(
+            args.group_test_seconds,
+            &env,
+            "SPEEDTEST_GROUP_TEST_SECONDS",
+        )?
+        .unwrap_or(DEFAULT_GROUP_TEST_SECONDS);
+        if !(2..=300).contains(&group_test_seconds) {
+            return Err(err("--group-test-seconds must be between 2 and 300"));
+        }
         let auth_token = env("SPEEDTEST_AUTH_TOKEN").map(Secret::new);
 
         let site_root = args
@@ -330,6 +348,7 @@ impl Config {
             auth_token,
             presence,
             server_link_mbps,
+            group_test_seconds,
             open: args.open,
             qr: !args.no_qr,
             site_root,

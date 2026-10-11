@@ -291,16 +291,27 @@ impl Profile {
     /// download, 2 s pause, 10 s upload. Packet loss is optional; append
     /// [`Step::default_packet_loss`] to include it.
     pub fn concurrent() -> Self {
+        Self::concurrent_for(10_000)
+    }
+
+    /// The group profile with `direction_ms` of download and of upload. Plans shorter than
+    /// 10 s per direction (CI, quick checks) use 1 s of latency and a 0.5 s pause.
+    pub fn concurrent_for(direction_ms: u32) -> Self {
+        let short = direction_ms < 10_000;
         Profile {
             name: "concurrent".into(),
             steps: vec![
-                Step::TimedLatency { duration_ms: 3000 },
-                Step::TimedDownload {
-                    duration_ms: 10_000,
+                Step::TimedLatency {
+                    duration_ms: if short { 1000 } else { 3000 },
                 },
-                Step::Pause { duration_ms: 2000 },
+                Step::TimedDownload {
+                    duration_ms: direction_ms,
+                },
+                Step::Pause {
+                    duration_ms: if short { 500 } else { 2000 },
+                },
                 Step::TimedUpload {
-                    duration_ms: 10_000,
+                    duration_ms: direction_ms,
                 },
             ],
         }
@@ -667,6 +678,14 @@ mod tests {
             ]
         );
         assert_eq!(c.steps[1].direction(), Some(Direction::Download));
+    }
+
+    #[test]
+    fn short_concurrent_profile() {
+        let c = Profile::concurrent_for(3000);
+        let d: Vec<_> = c.steps.iter().map(Step::duration_ms).collect();
+        assert_eq!(d, vec![Some(1000), Some(3000), Some(500), Some(3000)]);
+        assert_eq!(Profile::concurrent_for(10_000), Profile::concurrent());
     }
 
     #[test]

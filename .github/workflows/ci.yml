@@ -86,6 +86,10 @@ jobs:
     name: Playwright e2e
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Keep every speed test short in CI: Test together runs 3 s down + 3 s up
+      # (about 7.5 s plus the countdown) instead of the 10 s default.
+      SPEEDTEST_GROUP_TEST_SECONDS: "3"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -64,6 +64,31 @@
 	&.is-idle .value {
 		color: var(--color-border-strong);
 	}
+
+	&.is-pending .value {
+		color: var(--color-border-strong);
+		letter-spacing: 0.05em;
+		animation: hero-pending 1.4s var(--ease-standard) infinite alternate;
+	}
+}
+
+@keyframes hero-pending {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0.45;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.hero-value.is-pending .value {
+		animation: none;
+	}
+}
+
+:root[data-motion="reduce"] .hero-value.is-pending .value {
+	animation: none;
 }
 
 .hero-caption {
