@@ -298,6 +298,17 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Docker Hub overview
+        if: env.DOCKERHUB_USERNAME != ''
+        # Needs a token with Read, Write, Delete scope; a failure here doesn't fail the release.
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: puttyman/speed-test-rs
+          short-description: "Self-hosted LAN speed test: download, upload, latency, packet loss, multi-device live view."
+          readme-filepath: docs/DOCKERHUB.md
 
   publish:
     name: Publish GitHub Release
