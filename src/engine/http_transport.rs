@@ -42,6 +42,8 @@ struct Timed {
     t_end: f64,
     server_ms: Option<f64>,
     body_bytes: u64,
+    /// `X-Received-Bytes`: what the server read of an upload body.
+    received: Option<u64>,
 }
 
 impl HttpTransport {
@@ -118,6 +120,12 @@ impl HttpTransport {
             .ok()
             .flatten()
             .and_then(|h| parse_server_timing(&h));
+        let received = resp
+            .headers()
+            .get("X-Received-Bytes")
+            .ok()
+            .flatten()
+            .and_then(|h| h.trim().parse().ok());
         // Read the body without copying it into WASM: only byteLength.
         let mut body_bytes = 0u64;
         if let Some(body) = resp.body() {
@@ -149,6 +157,7 @@ impl HttpTransport {
             t_end,
             server_ms,
             body_bytes,
+            received,
         })
     }
 
@@ -221,6 +230,15 @@ impl HttpTransport {
             let blob = self.upload.blob(n)?;
             init.set_body(&blob);
             let t = self.request(&url, &init, false).await?;
+            // A body cut short (e.g. the browser ran out of Blob memory) must not count as
+            // a fast upload.
+            if let Some(got) = t.received
+                && got != n
+            {
+                return Err(EngineError::Protocol(format!(
+                    "upload: server received {got} of {n} bytes"
+                )));
+            }
             self.tx_bytes.set(self.tx_bytes.get() + n);
             Ok::<_, EngineError>(t)
         });

@@ -50,6 +50,9 @@ const TIMED_MIN_REMAINING_MS: f64 = 30.0;
 /// First request size of a timed transfer.
 const TIMED_FIRST_BYTES: u64 = 1_000_000;
 
+/// Largest HTTP upload request (per stream); see `transfer_step`.
+const HTTP_UPLOAD_MAX_BYTES: u64 = 250_000_000;
+
 /// The measurement link of a run.
 pub enum Link {
     Ws(WsTransport),
@@ -449,6 +452,14 @@ impl Run<'_> {
         };
         let streams = self.streams(step);
         if bytes.div_ceil(u64::from(streams)) > self.limits.max_bytes_per_request {
+            return Ok(PhaseStatus::Skipped);
+        }
+        // HTTP uploads are in-memory Blobs; past this size browsers can run out of Blob
+        // memory (`ERR_BLOB_OUT_OF_MEMORY`). WebSocket uploads stream and have no limit.
+        if dir == Direction::Upload
+            && matches!(self.link, Link::Http(_))
+            && bytes.div_ceil(u64::from(streams)) > HTTP_UPLOAD_MAX_BYTES
+        {
             return Ok(PhaseStatus::Skipped);
         }
         let bypass = step.bypass_min_duration();

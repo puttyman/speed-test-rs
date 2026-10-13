@@ -178,6 +178,9 @@ async fn up(State(state): State<AppState>, Query(q): Query<UpQuery>, body: Body)
     let timing = server_timing(start);
     let mut res = Json(UpResult { bytes: total }).into_response();
     res.headers_mut().insert("server-timing", timing);
+    // The byte count as a header too, so the client can check it without reading the body.
+    res.headers_mut()
+        .insert("x-received-bytes", HeaderValue::from(total));
     res.headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res

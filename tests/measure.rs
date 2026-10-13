@@ -681,6 +681,7 @@ async fn http_down_and_up() {
     assert_eq!(res.status(), 200);
     assert!(header(&res, "server-timing").starts_with("app;dur="));
     assert_eq!(header(&res, "cache-control"), "no-store");
+    assert_eq!(header(&res, "x-received-bytes"), "3000000");
     let body: serde_json::Value = serde_json::from_str(&res.text().await.unwrap()).unwrap();
     assert_eq!(body["bytes"], 3_000_000);
 
