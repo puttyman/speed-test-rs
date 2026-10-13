@@ -112,6 +112,15 @@ pub fn http_upload_duration_ms(request_to_response_ms: f64, server_ms: Option<f6
     }
 }
 
+/// Largest HTTP upload request; bigger uploads are sent as several back-to-back requests.
+pub const HTTP_UPLOAD_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
+
+/// `total` bytes as consecutive pieces of at most `chunk` bytes (nothing for 0).
+pub fn chunk_sizes(total: u64, chunk: u64) -> impl Iterator<Item = u64> {
+    let chunk = chunk.max(1);
+    (0..total.div_ceil(chunk)).map(move |i| chunk.min(total - i * chunk))
+}
+
 /// Timed steps grow the request size while requests are shorter than this.
 pub const TIMED_GROW_BELOW_MS: f64 = 250.0;
 
@@ -229,5 +238,17 @@ mod tests {
             1_500_000
         );
         assert_eq!(next_timed_size(10, 10.0, 10_000.0, 10), 10);
+    }
+
+    #[test]
+    fn chunk_sizes_cover_the_total() {
+        assert_eq!(chunk_sizes(0, 16).count(), 0);
+        assert_eq!(chunk_sizes(10, 16).collect::<Vec<_>>(), vec![10]);
+        assert_eq!(chunk_sizes(32, 16).collect::<Vec<_>>(), vec![16, 16]);
+        assert_eq!(chunk_sizes(33, 16).collect::<Vec<_>>(), vec![16, 16, 1]);
+        let gb = 1_000_000_000;
+        let parts: Vec<u64> = chunk_sizes(gb, HTTP_UPLOAD_CHUNK_BYTES).collect();
+        assert_eq!(parts.iter().sum::<u64>(), gb);
+        assert!(parts.iter().all(|&p| p <= HTTP_UPLOAD_CHUNK_BYTES));
     }
 }

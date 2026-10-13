@@ -14,7 +14,9 @@ use web_sys::{
 };
 
 use super::js::{EngineError, Result, js_err, now, performance, sleep, window};
-use super::util::{http_upload_duration_ms, parse_server_timing, split_bytes};
+use super::util::{
+    HTTP_UPLOAD_CHUNK_BYTES, chunk_sizes, http_upload_duration_ms, parse_server_timing, split_bytes,
+};
 use super::{Sample, UploadBuffer};
 
 /// Resource timing entries kept before the runner clears them between steps.
@@ -219,42 +221,48 @@ impl HttpTransport {
         })
     }
 
-    /// Uploads `bytes` over `streams` parallel requests:
-    /// Duration: the server's body-read time from `Server-Timing` (see
-    /// [`http_upload_duration_ms`]), longest stream when parallel.
+    /// Uploads `bytes` over `streams` parallel streams. Each stream sends its share as
+    /// back-to-back requests of at most [`HTTP_UPLOAD_CHUNK_BYTES`], built from the same
+    /// random buffer, so memory stays small at any size (a request body is a Blob, which
+    /// browsers copy in full; 1 GB in one Blob fails with `ERR_BLOB_OUT_OF_MEMORY`).
+    ///
+    /// Duration: per stream, the sum of the server's body-read times from `Server-Timing`
+    /// (see [`http_upload_duration_ms`]), so the gaps between requests don't count; the
+    /// longest stream when parallel.
     pub async fn upload(&self, bytes: u64, streams: u8) -> Result<Sample> {
         let parts = split_bytes(bytes, streams);
         let reqs = parts.iter().map(|&n| async move {
-            let url = self.url("/api/__up", "");
-            let init = self.init("POST")?;
-            let blob = self.upload.blob(n)?;
-            init.set_body(&blob);
-            let t = self.request(&url, &init, false).await?;
-            // A body cut short (e.g. the browser ran out of Blob memory) must not count as
-            // a fast upload.
-            if let Some(got) = t.received
-                && got != n
-            {
-                return Err(EngineError::Protocol(format!(
-                    "upload: server received {got} of {n} bytes"
-                )));
+            let mut duration = 0.0;
+            let mut server: Option<f64> = None;
+            for size in chunk_sizes(n, HTTP_UPLOAD_CHUNK_BYTES) {
+                let url = self.url("/api/__up", "");
+                let init = self.init("POST")?;
+                let blob = self.upload.blob(size)?;
+                init.set_body(&blob);
+                let t = self.request(&url, &init, false).await?;
+                // A body cut short must not count as a fast upload.
+                if let Some(got) = t.received
+                    && got != size
+                {
+                    return Err(EngineError::Protocol(format!(
+                        "upload: server received {got} of {size} bytes"
+                    )));
+                }
+                self.tx_bytes.set(self.tx_bytes.get() + size);
+                let span = match &t.entry {
+                    Some(e) if e.request_start() > 0.0 => e.response_start() - e.request_start(),
+                    _ => t.t_headers - t.t_start,
+                };
+                duration += http_upload_duration_ms(span, t.server_ms);
+                if let Some(ms) = t.server_ms {
+                    server = Some(server.unwrap_or(0.0) + ms);
+                }
             }
-            self.tx_bytes.set(self.tx_bytes.get() + n);
-            Ok::<_, EngineError>(t)
+            Ok::<_, EngineError>((duration, server))
         });
-        let timed = try_join_all(reqs).await?;
-        let mut duration: f64 = 0.0;
-        let mut server_max: Option<f64> = None;
-        for t in &timed {
-            let span = match &t.entry {
-                Some(e) if e.request_start() > 0.0 => e.response_start() - e.request_start(),
-                _ => t.t_headers - t.t_start,
-            };
-            duration = duration.max(http_upload_duration_ms(span, t.server_ms));
-            if let Some(s) = t.server_ms {
-                server_max = Some(server_max.map_or(s, |m: f64| m.max(s)));
-            }
-        }
+        let per_stream = try_join_all(reqs).await?;
+        let duration = per_stream.iter().map(|(d, _)| *d).fold(0.0, f64::max);
+        let server_max = per_stream.iter().filter_map(|(_, s)| *s).reduce(f64::max);
         Ok(Sample {
             duration_ms: duration,
             server_ms: server_max,
