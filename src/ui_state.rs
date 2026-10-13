@@ -8,6 +8,7 @@
 
 use leptos::prelude::*;
 
+use crate::model::profile::Profile;
 use crate::model::units::Unit;
 
 /// `localStorage` keys. `speedtest.device_id` is shared with the engine.
@@ -22,6 +23,8 @@ pub mod keys {
     pub const PROFILE: &str = "speedtest.profile";
     pub const STREAMS: &str = "speedtest.streams";
     pub const HIDE_ME: &str = "speedtest.hide_me";
+    pub const TEST_LENGTH: &str = "speedtest.test_length";
+    pub const TIMED_MS: &str = "speedtest.timed_ms";
 }
 
 /// Color theme preference.
@@ -124,6 +127,8 @@ pub const PROFILES: [(&str, &str); 3] = [
     ("extended", "Extended"),
 ];
 pub const MAX_STREAMS: u8 = 8;
+/// Test lengths offered in the settings: size-based profiles, or a fixed duration.
+pub const TEST_LENGTHS: [(&str, &str); 2] = [("auto", "Automatic"), ("timed", "Timed")];
 
 /// Shared UI state, provided once by `App` as context. Cheap to copy.
 #[derive(Clone, Copy)]
@@ -149,6 +154,14 @@ pub struct UiState {
     pub max_streams: RwSignal<u8>,
     /// "Hide me": other devices don't see this one by name (SPEC §5.11).
     pub hide_me: RwSignal<bool>,
+    /// `"auto"` (size-based profiles) or `"timed"` (SPEC §7.8).
+    pub test_length: RwSignal<String>,
+    /// Download (and upload) time of a timed test, one of
+    /// [`TIMED_STOPS_MS`](crate::components::length_slider::TIMED_STOPS_MS).
+    pub timed_ms: RwSignal<u32>,
+    /// Test-only `?timed_ms=` override of `timed_ms` (not persisted, may be
+    /// shorter than the slider's minimum).
+    pub timed_override: RwSignal<Option<u32>>,
 }
 
 impl UiState {
@@ -168,7 +181,40 @@ impl UiState {
             running: RwSignal::new(false),
             max_streams: RwSignal::new(MAX_STREAMS),
             hide_me: RwSignal::new(false),
+            test_length: RwSignal::new("auto".into()),
+            timed_ms: RwSignal::new(Profile::TIMED_DEFAULT_MS),
+            timed_override: RwSignal::new(None),
         }
+    }
+
+    /// Whether the Timed test length is selected (tracked).
+    pub fn is_timed(&self) -> bool {
+        self.test_length.with(|t| t == "timed")
+    }
+
+    /// The timed length in effect: the test override, else the setting (tracked).
+    pub fn effective_timed_ms(&self) -> u32 {
+        self.timed_override
+            .get()
+            .unwrap_or_else(|| self.timed_ms.get())
+    }
+
+    /// The profile a solo run uses with the current settings (tracked).
+    pub fn test_profile(&self) -> Profile {
+        if self.is_timed() {
+            match self.timed_override.get() {
+                Some(ms) => Profile::timed_unclamped(ms),
+                None => Profile::timed(self.timed_ms.get()),
+            }
+        } else {
+            Profile::by_name(&self.profile.get()).unwrap_or_default()
+        }
+    }
+
+    /// The length this device asks for when it creates a group: its timed
+    /// length, or `None` (the server default) with Automatic (tracked).
+    pub fn group_length(&self) -> Option<u32> {
+        self.is_timed().then(|| self.effective_timed_ms())
     }
 
     /// Whether animations should be replaced by static states.
@@ -248,6 +294,13 @@ pub fn provide_ui_state() -> UiState {
             storage_set(keys::STREAMS, &s.to_string());
         }
     });
+    Effect::new(move |_| {
+        let (l, ms) = (ui.test_length.get(), ui.timed_ms.get());
+        if ui.loaded.get() {
+            storage_set(keys::TEST_LENGTH, &l);
+            storage_set(keys::TIMED_MS, &ms.to_string());
+        }
+    });
     ui
 }
 
@@ -278,6 +331,15 @@ fn load(ui: UiState) {
         .filter(|s| (1..=MAX_STREAMS).contains(s))
     {
         ui.streams.set(s);
+    }
+    if let Some(l) =
+        storage_get(keys::TEST_LENGTH).filter(|l| TEST_LENGTHS.iter().any(|(k, _)| k == l))
+    {
+        ui.test_length.set(l);
+    }
+    if let Some(ms) = storage_get(keys::TIMED_MS).and_then(|s| s.parse::<u32>().ok()) {
+        ui.timed_ms
+            .set(crate::components::length_slider::snap_ms(ms));
     }
     if storage_get(keys::HIDE_ME).as_deref() == Some("1") {
         ui.hide_me.set(true);

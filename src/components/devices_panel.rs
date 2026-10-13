@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::charts::Sparkline;
 use super::icons;
+use super::length_slider::{LengthSlider, format_length};
 use super::presence::{GroupView, peer_phase, peer_rate, use_presence};
 use crate::components::phase_timeline::PHASES;
 use crate::model::protocol::{GroupState, Peer, Phase};
@@ -175,7 +176,7 @@ pub fn DevicesPanel(
                         <button
                             type="button"
                             class="pill-button pill-sm pill-ghost"
-                            on:click=move |_| presence.create_group()
+                            on:click=move |_| presence.create_group(untrack(|| ui.group_length()))
                         >
                             {icons::users()}
                             "Test together"
@@ -223,6 +224,15 @@ fn GroupBar(group: GroupView) -> impl IntoView {
         .find(|m| m.id == group.host)
         .map(|m| m.device_name.clone())
         .unwrap_or_else(|| "the host".into());
+    let server_length = group.direction_ms;
+    // The host's pick in this lobby, else the group's length.
+    let length = Signal::derive(move || {
+        presence
+            .group_length
+            .get()
+            .or(server_length)
+            .unwrap_or(10_000)
+    });
     view! {
         <div class="group-bar" role="group" aria-label="Test together">
             <div class="group-bar-text">
@@ -237,6 +247,29 @@ fn GroupBar(group: GroupView) -> impl IntoView {
                         format!("Joined. Waiting for {host_name} to start…")
                     }}
                 </p>
+                {if host {
+                    view! {
+                        <div class="group-length">
+                            <label class="group-length-label" for="group-length">
+                                "Length"
+                            </label>
+                            <LengthSlider
+                                id="group-length"
+                                value=length
+                                on_change=Callback::new(move |ms| presence.group_length.set(Some(ms)))
+                            />
+                            <span class="group-length-note">"each way"</span>
+                        </div>
+                    }
+                        .into_any()
+                } else {
+                    view! {
+                        <p class="group-length-note">
+                            {move || format!("{} each way", format_length(length.get()))}
+                        </p>
+                    }
+                        .into_any()
+                }}
                 <ul class="member-chips">
                     {group
                         .members
@@ -306,7 +339,18 @@ pub fn InviteToast() -> impl IntoView {
                     view! {
                         <div class="toast invite-toast" role="alert">
                             <span class="toast-icon" aria-hidden="true">{icons::users()}</span>
-                            <span class="toast-text">{format!("{} wants to test together", inv.host)}</span>
+                            <span class="toast-text">
+                                <span class="toast-title">{format!("{} wants to test together", inv.host)}</span>
+                                {inv
+                                    .direction_ms
+                                    .map(|ms| {
+                                        view! {
+                                            <span class="toast-sub">
+                                                {format!("Test together · {} each way", format_length(ms))}
+                                            </span>
+                                        }
+                                    })}
+                            </span>
                             <button
                                 type="button"
                                 class="toast-action"

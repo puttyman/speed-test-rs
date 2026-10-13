@@ -17,6 +17,7 @@ use crate::components::group_view::{
 use crate::components::hero::Hero;
 use crate::components::icons;
 use crate::components::label_picker::{LabelPicker, clean_label};
+use crate::components::length_slider::{format_length, time_left};
 use crate::components::metric_tile::MetricTile;
 use crate::components::motion::{FlowMode, OtherFlow};
 use crate::components::phase_timeline::{PHASES, timeline};
@@ -58,7 +59,7 @@ const FAST_LINK_BYTES: u64 = 1_000_000_000;
 pub fn step_label(step: &Step) -> String {
     use crate::components::charts::scale::format_bytes;
     let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-    let secs = |ms: u32| format!("{} s", f64::from(ms) / 1000.0);
+    let secs = format_length;
     match *step {
         Step::Latency { num_packets } => {
             format!("Latency · {}", plural(num_packets, "probe", "probes"))
@@ -91,6 +92,26 @@ fn step_units(step: &Step) -> u32 {
         Step::Download { count, .. } | Step::Upload { count, .. } => count,
         _ => 0,
     }
+}
+
+/// `"Peak 941 · Avg 902 Mbps"` for a timed run's tile; `None` without both.
+pub fn peak_avg_text(
+    peak: Option<f64>,
+    avg: Option<f64>,
+    unit: crate::model::units::Unit,
+) -> Option<String> {
+    let (peak, avg) = (peak?, avg?);
+    let (p, _) = format_rate(peak, unit);
+    let (a, u) = format_rate(avg, unit);
+    Some(format!("Peak {p} · Avg {a} {u}"))
+}
+
+/// Time left and the remaining fraction of a timed step that started
+/// `elapsed_ms` ago; `None` for other steps.
+pub fn timed_progress(step: &Step, elapsed_ms: f64) -> Option<(f64, f64)> {
+    let d = f64::from(step.duration_ms()?).max(1.0);
+    let left = (d - elapsed_ms).clamp(0.0, d);
+    Some((left, left / d))
 }
 
 /// Why packet loss is unavailable for a run.
@@ -144,6 +165,10 @@ struct TestController {
     current: RwSignal<Option<usize>>,
     /// Probes/requests finished in the current step.
     step_done: RwSignal<u32>,
+    /// When the current step started (ms since the run started).
+    step_started: RwSignal<f64>,
+    /// Ms since the run started, ticking while it runs (countdowns).
+    clock: RwSignal<f64>,
     phase: RwSignal<Phase>,
     live_bps: RwSignal<Option<f64>>,
     download: RwSignal<Option<f64>>,
@@ -201,6 +226,8 @@ impl TestController {
             statuses: RwSignal::new(Vec::new()),
             current: RwSignal::new(None),
             step_done: RwSignal::new(0),
+            step_started: RwSignal::new(0.0),
+            clock: RwSignal::new(0.0),
             phase: RwSignal::new(Phase::Idle),
             live_bps: RwSignal::new(None),
             download: RwSignal::new(None),
@@ -243,6 +270,8 @@ impl TestController {
         self.statuses.set(vec![None; n]);
         self.current.set(None);
         self.step_done.set(0);
+        self.step_started.set(0.0);
+        self.clock.set(0.0);
         self.phase.set(Phase::Idle);
         for s in [
             self.live_bps,
@@ -323,8 +352,8 @@ impl TestController {
             "http" => Transport::Http,
             _ => Transport::Websocket,
         };
-        let profile_name = ui.profile.get_untracked();
-        let profile = Profile::by_name(&profile_name).unwrap_or_default();
+        let profile = untrack(|| ui.test_profile());
+        let profile_name = profile.name.clone();
         // Reuse the page's presence session, so the server attributes this
         // run's traffic to this device (live speed, overlap flags).
         let mut opts = match self.presence.handle() {
@@ -375,9 +404,29 @@ impl TestController {
                 - t0
         };
         let this = self;
+        // Tick the clock (timed countdown) while the run lasts.
+        // Plain `Rc`, not reactive storage: the page (and its signals) may be
+        // disposed before the interval stops.
+        let interval = Rc::new(std::cell::Cell::new(None::<IntervalHandle>));
+        let tick_handle = interval.clone();
+        if let Ok(h) = set_interval_with_handle(
+            move || {
+                if this.status.try_get_untracked() == Some(RunStatus::Running) {
+                    this.clock.try_set(elapsed());
+                } else if let Some(h) = tick_handle.get() {
+                    h.clear();
+                }
+            },
+            std::time::Duration::from_millis(250),
+        ) {
+            interval.set(Some(h));
+        }
         let on_event = move |ev: EngineEvent| match ev {
             EngineEvent::Connected { .. } => {}
             EngineEvent::PhaseStarted { index, step } => {
+                let t = elapsed();
+                this.step_started.set(t);
+                this.clock.set(t);
                 this.current.set(Some(index));
                 this.step_done.set(0);
                 this.phase.set(step.phase());
@@ -653,15 +702,21 @@ pub fn TestPage() -> impl IntoView {
 
     // Steps shown by the idle timeline follow the selected profile.
     Effect::new(move |_| {
-        let p = ui.profile.get();
+        let p = ui.test_profile();
         if test.status.get_untracked() == RunStatus::Idle {
-            test.steps
-                .set(Profile::by_name(&p).unwrap_or_default().steps);
+            test.steps.set(p.steps);
         }
     });
 
-    // `?autostart=1` starts a run once settings are loaded (SPEC §7.8).
+    // `?timed_ms=N` (tests only): a timed length below the slider's minimum.
     let query = use_query_map();
+    Effect::new(move |_| {
+        let ms = query.with(|q| q.get("timed_ms").and_then(|v| v.parse::<u32>().ok()));
+        ui.timed_override
+            .set(ms.map(|ms| ms.clamp(1000, Profile::TIMED_MAX_MS)));
+    });
+
+    // `?autostart=1` starts a run once settings are loaded (SPEC §7.8).
     Effect::new(move |started: Option<bool>| {
         if started == Some(true) {
             return true;
@@ -686,17 +741,54 @@ pub fn TestPage() -> impl IntoView {
         }
         let current = test.current.get();
         let progress = test.steps.with(|steps| {
-            current
-                .and_then(|i| steps.get(i))
-                .map_or(0.0, |s| match step_units(s) {
+            current.and_then(|i| steps.get(i)).map_or(0.0, |s| {
+                if let Some((_, left)) =
+                    timed_progress(s, test.clock.get() - test.step_started.get())
+                {
+                    return 1.0 - left;
+                }
+                match step_units(s) {
                     0 => 0.5,
                     n => f64::from(test.step_done.get()) / f64::from(n),
-                })
+                }
+            })
         });
         test.steps.with(|steps| {
             test.statuses
                 .with(|st| timeline(steps, st, current, progress))
         })
+    });
+
+    // Time left in a timed step: (ms, remaining fraction), solo and group.
+    let solo_left = Memo::new(move |_| {
+        if status.get() != RunStatus::Running {
+            return None;
+        }
+        let i = test.current.get()?;
+        test.steps.with(|s| {
+            s.get(i)
+                .and_then(|s| timed_progress(s, test.clock.get() - test.step_started.get()))
+        })
+    });
+    let group_left = Memo::new(move |_| {
+        if !matches!(stage.get(), GroupStage::Running) {
+            return None;
+        }
+        let steps = presence.group_plan.get();
+        let elapsed = presence.clock.get() - presence.group_starts_at.get();
+        let (_, cur, p) = plan_progress(&steps, elapsed);
+        let step = steps.get(cur?)?;
+        // Only the transfers get a countdown.
+        step.direction()?;
+        let d = f64::from(step.duration_ms()?);
+        Some((d * (1.0 - p), 1.0 - p))
+    });
+    let ring = Signal::derive(move || {
+        if group_mode.get() {
+            group_left.get().map(|(_, f)| f)
+        } else {
+            solo_left.get().map(|(_, f)| f)
+        }
     });
 
     // Hero content by state (solo run or group test).
@@ -766,16 +858,30 @@ pub fn TestPage() -> impl IntoView {
                     let (u, uu) = format_rate(up.unwrap_or(f64::NAN), unit);
                     format!("{n} devices · Total upload {u} {uu}")
                 }
+                GroupStage::Running => match group_left.get() {
+                    Some((left, _)) => {
+                        format!("{n} devices · {}", time_left(left))
+                    }
+                    None => format!("{n} devices, measured by the server"),
+                },
                 _ => format!("{n} devices, measured by the server"),
             };
         }
         match status.get() {
             RunStatus::Idle => "Measures download, upload and latency to this server.".to_string(),
-            RunStatus::Running => test
-                .current
-                .get()
-                .and_then(|i| test.steps.with(|s| s.get(i).map(step_label)))
-                .unwrap_or_else(|| "Opening connections…".into()),
+            RunStatus::Running => {
+                let step = test
+                    .current
+                    .get()
+                    .and_then(|i| test.steps.with(|s| s.get(i).cloned()));
+                match (&step, solo_left.get()) {
+                    (Some(s), Some((left, _))) => {
+                        format!("{} · {}", phase_name(s.phase()), time_left(left))
+                    }
+                    (Some(s), None) => step_label(s),
+                    (None, _) => "Opening connections…".into(),
+                }
+            }
             RunStatus::Done => {
                 let unit = ui.units.get();
                 let (u, uu) = format_rate(test.upload.get().unwrap_or(f64::NAN), unit);
@@ -858,6 +964,23 @@ pub fn TestPage() -> impl IntoView {
             })
         })
     };
+    // Timed runs: peak and average instead of latency under load.
+    let rate_detail =
+        move |loaded: RwSignal<Vec<f64>>,
+              f: fn(&crate::model::result::Summary) -> (Option<f64>, Option<f64>)| {
+            let under_load = loaded_detail(loaded);
+            Signal::derive(move || {
+                let unit = ui.units.get();
+                test.result
+                    .with(|r| {
+                        r.as_ref().and_then(|r| {
+                            let (p, a) = f(&r.summary);
+                            peak_avg_text(p, a, unit)
+                        })
+                    })
+                    .or_else(|| under_load.get())
+            })
+        };
     let loss_detail = Signal::derive(move || match (test.loss_counts.get(), status.get()) {
         (Some(c), _) => Some(format!("{} of {} lost", c.lost, c.sent)),
         (None, RunStatus::Done) => Some("Unavailable".into()),
@@ -883,6 +1006,7 @@ pub fn TestPage() -> impl IntoView {
                 value=hero_value
                 kind=hero_kind
                 caption=hero_caption
+                ring=ring
                 timeline=timeline_steps
                 flow_mode=flow_mode
                 flow_bps=flow_bps
@@ -986,7 +1110,7 @@ pub fn TestPage() -> impl IntoView {
                         value=test.download
                         series=Series::Download
                         samples=test.down_samples
-                        detail=loaded_detail(test.down_loaded)
+                        detail=rate_detail(test.down_loaded, |s| (s.download_peak_bps, s.download_avg_bps))
                         active=phase_is(Phase::Download)
                         index=0
                     />
@@ -997,7 +1121,7 @@ pub fn TestPage() -> impl IntoView {
                         value=test.upload
                         series=Series::Upload
                         samples=test.up_samples
-                        detail=loaded_detail(test.up_loaded)
+                        detail=rate_detail(test.up_loaded, |s| (s.upload_peak_bps, s.upload_avg_bps))
                         active=phase_is(Phase::Upload)
                         index=1
                     />
@@ -1038,7 +1162,13 @@ pub fn TestPage() -> impl IntoView {
                     <ServerCard
                         info=test.info
                         transport=ui.transport
-                        profile=ui.profile
+                        profile=Signal::derive(move || {
+                            if ui.is_timed() {
+                                format!("Timed · {} each way", format_length(ui.effective_timed_ms()))
+                            } else {
+                                ui.profile.get()
+                            }
+                        })
                         streams=ui.streams
                     />
                 </div>
@@ -1332,6 +1462,28 @@ mod tests {
             step_label(&Step::Pause { duration_ms: 2500 }),
             "Pause · 2.5 s"
         );
+        assert_eq!(
+            step_label(&Step::TimedDownload {
+                duration_ms: 120_000
+            }),
+            "Download · 2 min"
+        );
+    }
+
+    #[test]
+    fn timed_texts() {
+        use crate::model::units::Unit;
+        assert_eq!(
+            peak_avg_text(Some(941e6), Some(902e6), Unit::Mbps).as_deref(),
+            Some("Peak 941 · Avg 902 Mbps")
+        );
+        assert_eq!(peak_avg_text(None, Some(1.0), Unit::Mbps), None);
+        let s = Step::TimedUpload {
+            duration_ms: 10_000,
+        };
+        assert_eq!(timed_progress(&s, 2500.0), Some((7500.0, 0.75)));
+        assert_eq!(timed_progress(&s, 99_000.0), Some((0.0, 0.0)));
+        assert_eq!(timed_progress(&Step::download(1, 1), 1.0), None);
     }
 
     #[test]

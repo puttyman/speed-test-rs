@@ -804,8 +804,8 @@ impl ControlCtx<'_> {
                 sdp_mid,
                 sdp_m_line_index,
             } => self.rtc_ice(candidate, sdp_mid, sdp_m_line_index).await,
-            ClientMsg::GroupCreate => {
-                if let Err(e) = self.state.groups.create(id) {
+            ClientMsg::GroupCreate { direction_ms } => {
+                if let Err(e) = self.state.groups.create(id, direction_ms) {
                     self.reply(e.to_msg()).await;
                 }
             }
@@ -819,12 +819,12 @@ impl ControlCtx<'_> {
                     self.reply(e.to_msg()).await;
                 }
             }
-            ClientMsg::GroupStart => {
+            ClientMsg::GroupStart { direction_ms } => {
                 let ctx = StartContext {
                     storage: self.state.storage.clone(),
                     client_ip: self.peer_ip,
                 };
-                if let Err(e) = self.state.groups.start(id, ctx) {
+                if let Err(e) = self.state.groups.start(id, direction_ms, ctx) {
                     self.reply(e.to_msg()).await;
                 }
             }

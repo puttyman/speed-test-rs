@@ -3,9 +3,12 @@
 //!
 //! Lifecycle and messages (all on control sockets):
 //!
-//! 1. `GroupCreate` → a new group in `Forming` with the sender as host (it leaves any other
-//!    group first). The host gets `GroupUpdate`; every other control socket gets
-//!    `GroupInvite{group, host: <host device name>}`.
+//! 1. `GroupCreate{direction_ms?}` → a new group in `Forming` with the sender as host (it
+//!    leaves any other group first). `direction_ms` is the download (and upload) time the
+//!    host chose, clamped to [`MIN_DIRECTION_MS`]`..=`[`MAX_DIRECTION_MS`] (2 s – 5 min);
+//!    without it, `--group-test-seconds` (default 10 s). The host gets `GroupUpdate`; every
+//!    other control socket gets `GroupInvite{group, host: <host device name>, direction_ms}`.
+//!    Every `GroupUpdate` carries the group's `direction_ms`.
 //! 2. `GroupJoin{group}` → the sender joins (leaving any other group); every member gets
 //!    `GroupUpdate{group, host, members, state}`. Joining a group that isn't forming is a
 //!    `Conflict`, an unknown group `NotFound`.
@@ -13,9 +16,10 @@
 //!    remaining members and the leaver get `GroupUpdate`. When the host leaves a forming or
 //!    starting group, the group is `Cancelled`. Once the group is `Running`, a member who
 //!    leaves (host included) is only marked incomplete, so the others' measurement survives.
-//! 4. `GroupStart` (host only, `Conflict` otherwise; at least [`MIN_MEMBERS`] members) →
+//! 4. `GroupStart{direction_ms?}` (host only, `Conflict` otherwise; at least
+//!    [`MIN_MEMBERS`] members; a `direction_ms` replaces the group's length, same clamp) →
 //!    every member gets `GroupStart{group, starts_in_ms: 3000, plan}` (`Profile::concurrent_for`
-//!    with `--group-test-seconds`, default 10 s per direction)
+//!    with the group's length)
 //!    and `GroupUpdate{state: Starting}`; at the start instant the state becomes `Running`
 //!    (another `GroupUpdate`).
 //! 5. During the plan the server samples every member session's byte counters every
@@ -72,6 +76,20 @@ pub const STUCK_GRACE: Duration = Duration::from_secs(5);
 pub const KEEP_DONE: Duration = Duration::from_secs(10 * 60);
 /// The start of each transfer window that is ignored (ramp-up).
 pub const RAMP_SKIP_MS: u64 = 1000;
+/// Shortest and longest download (and upload) time of a group plan.
+pub const MIN_DIRECTION_MS: u32 = 2_000;
+pub const MAX_DIRECTION_MS: u32 = 300_000;
+/// Window of a member's peak rate.
+pub const PEAK_WINDOW_MS: f64 = 1000.0;
+
+/// The download (and upload) time of a group: the requested one clamped to
+/// [`MIN_DIRECTION_MS`]`..=`[`MAX_DIRECTION_MS`], else `default_ms`.
+pub fn group_direction_ms(requested: Option<u32>, default_ms: u32) -> u32 {
+    requested
+        .unwrap_or(default_ms)
+        .clamp(MIN_DIRECTION_MS, MAX_DIRECTION_MS)
+}
+
 /// A posted run is attributed to a finished group only this long after it ended.
 const REPORT_WINDOW: Duration = Duration::from_secs(2 * 60);
 
@@ -115,6 +133,8 @@ struct Group {
     plan_end: Option<Instant>,
     /// When the group reached `Finished` or `Cancelled`.
     done_at: Option<Instant>,
+    /// Download (and upload) time of the plan.
+    direction_ms: u32,
     plan: Profile,
     reports: HashMap<Uuid, Report>,
     task: Option<JoinHandle<()>>,
@@ -140,8 +160,8 @@ struct Inner {
     registry: SessionRegistry,
     enabled: bool,
     server_link_mbps: Option<u32>,
-    /// The plan every new group runs (`--group-test-seconds`).
-    plan: Profile,
+    /// The default download (and upload) time of a group (`--group-test-seconds`).
+    default_direction_ms: u32,
     groups: Mutex<HashMap<Uuid, Group>>,
 }
 
@@ -176,7 +196,7 @@ impl Groups {
                 registry,
                 enabled: config.presence,
                 server_link_mbps: config.server_link_mbps,
-                plan: Profile::concurrent_for(config.group_test_seconds * 1000),
+                default_direction_ms: config.group_test_seconds * 1000,
                 groups: Mutex::new(HashMap::new()),
             }),
         }
@@ -252,6 +272,7 @@ impl Groups {
                         host: g.host,
                         members,
                         state: g.state,
+                        direction_ms: Some(g.direction_ms),
                     },
                 )
             })
@@ -309,9 +330,10 @@ impl Groups {
         tracing::info!(group = %g.id, "group test cancelled");
     }
 
-    /// `GroupCreate` from `host`.
-    pub fn create(&self, host: Uuid) -> Result<Uuid, GroupError> {
+    /// `GroupCreate{direction_ms}` from `host`.
+    pub fn create(&self, host: Uuid, direction_ms: Option<u32>) -> Result<Uuid, GroupError> {
         self.check_enabled()?;
+        let direction_ms = group_direction_ms(direction_ms, self.inner.default_direction_ms);
         let id = Uuid::now_v7();
         let mut map = self.lock();
         let mut out = self.leave_all(&mut map, host);
@@ -325,7 +347,8 @@ impl Groups {
             start_at: None,
             plan_end: None,
             done_at: None,
-            plan: self.inner.plan.clone(),
+            direction_ms,
+            plan: Profile::concurrent_for(direction_ms),
             reports: HashMap::new(),
             task: None,
         };
@@ -336,13 +359,14 @@ impl Groups {
         let invite = ServerMsg::GroupInvite {
             group: id,
             host: self.device_name(host),
+            direction_ms: Some(direction_ms),
         };
         for (session, tx) in self.inner.registry.control_senders() {
             if session != host {
                 let _ = tx.try_send(invite.clone());
             }
         }
-        tracing::info!(group = %id, %host, "group test created");
+        tracing::info!(group = %id, %host, direction_ms, "group test created");
         Ok(id)
     }
 
@@ -400,8 +424,13 @@ impl Groups {
         }
     }
 
-    /// `GroupStart` from `session`.
-    pub fn start(&self, session: Uuid, ctx: StartContext) -> Result<(), GroupError> {
+    /// `GroupStart{direction_ms}` from `session`.
+    pub fn start(
+        &self,
+        session: Uuid,
+        direction_ms: Option<u32>,
+        ctx: StartContext,
+    ) -> Result<(), GroupError> {
         self.check_enabled()?;
         let mut map = self.lock();
         let Some(g) = map
@@ -421,6 +450,10 @@ impl Groups {
                 ErrorCode::Conflict,
                 "at least two devices are needed to test together",
             ));
+        }
+        if let Some(ms) = direction_ms {
+            g.direction_ms = group_direction_ms(Some(ms), self.inner.default_direction_ms);
+            g.plan = Profile::concurrent_for(g.direction_ms);
         }
         let now = Instant::now();
         let start_at = now + Duration::from_millis(u64::from(COUNTDOWN_MS));
@@ -452,7 +485,12 @@ impl Groups {
             link_bps,
         ));
         g.task = Some(task);
-        tracing::info!(group = %g.id, members = g.members.len(), "group test starting");
+        tracing::info!(
+            group = %g.id,
+            members = g.members.len(),
+            direction_ms = g.direction_ms,
+            "group test starting"
+        );
         drop(map);
         self.deliver(out);
         Ok(())
@@ -623,6 +661,34 @@ fn window_bps(
     Some((bytes.max(0.0) * 8.0) / ((b - a) / 1000.0))
 }
 
+/// The highest rate over any [`PEAK_WINDOW_MS`] (at the sampling interval's granularity)
+/// within `window` (ms).
+fn window_peak_bps(
+    samples: &Samples,
+    window: &Range<u64>,
+    pick: impl Fn(&(f64, u64, u64)) -> u64,
+) -> Option<f64> {
+    let (a, b) = (window.start as f64, window.end as f64);
+    let inside: Vec<(f64, u64)> = samples
+        .iter()
+        .filter(|s| s.0 >= a && s.0 <= b)
+        .map(|s| (s.0, pick(s)))
+        .collect();
+    let mut best: Option<f64> = None;
+    let mut j = 0;
+    for i in 1..inside.len() {
+        while j + 1 < i && inside[i].0 - inside[j + 1].0 >= PEAK_WINDOW_MS {
+            j += 1;
+        }
+        let dt = inside[i].0 - inside[j].0;
+        if dt >= PEAK_WINDOW_MS {
+            let bps = inside[i].1.saturating_sub(inside[j].1) as f64 * 8.0 / (dt / 1000.0);
+            best = Some(best.map_or(bps, |x| x.max(bps)));
+        }
+    }
+    best
+}
+
 /// Per-interval rates for the result's time series.
 fn series(samples: &Samples) -> Vec<RateSample> {
     samples
@@ -726,6 +792,8 @@ async fn run_group(
                 up_loaded_latency_ms: report.up_loaded_latency_ms,
                 incomplete: dropped[i] || left.contains(session),
                 series: series(s),
+                download_peak_bps: down_w.as_ref().and_then(|w| window_peak_bps(s, w, |x| x.1)),
+                upload_peak_bps: up_w.as_ref().and_then(|w| window_peak_bps(s, w, |x| x.2)),
             }
         })
         .collect();
@@ -879,6 +947,38 @@ mod tests {
         assert_eq!(ser.len(), 16);
         assert!((ser[0].down_bps - 8e6).abs() < 1.0);
         assert_eq!(ser[0].t_ms, 250);
+    }
+
+    #[test]
+    fn window_peak_is_the_best_second() {
+        // 1 MB/s, with 2 MB/s between 1 s and 2.5 s.
+        let mut bytes = 0u64;
+        let s: Samples = (0..=16)
+            .map(|i| {
+                let t = f64::from(i) * 250.0;
+                let sample = (t, bytes, 0);
+                bytes += if (1000.0..2500.0).contains(&t) {
+                    500_000
+                } else {
+                    250_000
+                };
+                sample
+            })
+            .collect();
+        let peak = window_peak_bps(&s, &(0..4000), |x| x.1).unwrap();
+        assert!((peak - 16e6).abs() < 1.0, "{peak}");
+        // Outside the burst.
+        let calm = window_peak_bps(&s, &(2500..4000), |x| x.1).unwrap();
+        assert!((calm - 8e6).abs() < 1.0, "{calm}");
+        assert!(window_peak_bps(&s, &(0..500), |x| x.1).is_none());
+    }
+
+    #[test]
+    fn group_lengths_are_clamped() {
+        assert_eq!(group_direction_ms(None, 10_000), 10_000);
+        assert_eq!(group_direction_ms(Some(60_000), 10_000), 60_000);
+        assert_eq!(group_direction_ms(Some(10), 10_000), MIN_DIRECTION_MS);
+        assert_eq!(group_direction_ms(Some(900_000), 10_000), MAX_DIRECTION_MS);
     }
 
     #[test]

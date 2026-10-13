@@ -35,6 +35,11 @@ The full design is in [`SPEC.md`](SPEC.md).
   parallel streams, and percentiles rather than averages. Choose the `quick`, `standard` or
   `extended` (4 streams for the large sizes) profile in the settings. WebSockets avoid per-request overhead, so
   fast LANs are not capped by HTTP request rates.
+- **Timed tests.** Set *Test length* to **Timed** in the settings to keep the link busy for a
+  fixed time (10 s to 5 min, e.g. "Download 30 s, then upload 30 s") instead of moving fixed
+  sizes. The result adds the **peak** (best second) and the **average** speed, and the
+  throughput-over-time chart (also on the saved run's page) shows dips, QoS shaping or
+  throttling that a short burst misses.
 - **HTTP cross-check.** A second transport uses Cloudflare's own method (`GET /api/__down`,
   `POST /api/__up`, timed with the browser's Resource Timing API) so you can compare both.
 - **Latency, jitter and bufferbloat.** Idle latency and jitter from ping/pong on a dedicated
@@ -50,7 +55,8 @@ The full design is in [`SPEC.md`](SPEC.md).
 - **Multi-device.** Every open browser shows up in the others' *Devices* panel with live
   speeds counted by the server. **Test together** runs a synchronized test on several devices
   and reports the aggregate, each device's share and a fairness index, so you see what the
-  Wi-Fi delivers when it is shared. Solo runs that overlapped with someone else's test are
+  Wi-Fi delivers when it is shared. The organizer picks how long it runs (up to 5 min each
+  way) before pressing Start, to stress the access point with several devices for longer. Solo runs that overlapped with someone else's test are
   flagged.
 - **Installable PWA.** Over HTTPS the app installs to the home screen and has an offline
   shell. Measurement traffic is never cached.
@@ -191,7 +197,7 @@ variables count as unset.
 | `--max-bytes <N>` | `SPEEDTEST_MAX_BYTES` | `2000000000` | Largest single download or upload request, in bytes. |
 | `--no-presence` | `SPEEDTEST_PRESENCE=false` | presence on | Turn off the live Devices panel and group tests. |
 | `--server-link-mbps <N>` | `SPEEDTEST_SERVER_LINK_MBPS` | auto (Linux) | The server's link speed, for the "server may be the bottleneck" warning. |
-| `--group-test-seconds <N>` | `SPEEDTEST_GROUP_TEST_SECONDS` | `10` | Seconds of download and of upload in a Test together run (2–300). |
+| `--group-test-seconds <N>` | `SPEEDTEST_GROUP_TEST_SECONDS` | `10` | Default seconds of download and of upload in a Test together run (2–300). The organizer can pick another length in the app; the server caps it at 5 min. |
 | `--tls-cert <FILE>` | `SPEEDTEST_TLS_CERT` | – | PEM certificate (chain). Together with `--tls-key` it turns on HTTPS. |
 | `--tls-key <FILE>` | `SPEEDTEST_TLS_KEY` | – | PEM private key. |
 | `--tls-listen <ADDR>` | `SPEEDTEST_TLS_LISTEN` | `0.0.0.0:8443` and `[::]:8443` | HTTPS/WSS listen address, next to the plain HTTP one. Needs a certificate. |
@@ -299,6 +305,10 @@ before trusting a number:
   settings, another browser, or a wired client to see whether the limit is the client.
 - **Docker bridge networking** adds NAT and, for some setups, a userland proxy. Use host
   networking or the standalone binary for multi-gigabit tests.
+- **Throttling and QoS.** A standard test lasts seconds. To see whether the speed holds, use
+  a **Timed** test of a minute or more and look at the throughput chart: shaping shows up as
+  full speed for a while, then a drop. For an access point under load, use **Test together**
+  with a long length on several devices.
 - **VPNs and proxies** on the client route traffic away from the LAN. Turn them off while
   testing.
 

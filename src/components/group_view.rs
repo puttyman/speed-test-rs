@@ -400,8 +400,8 @@ pub fn GroupResultView(result: GroupResult, #[prop(optional)] me: Option<Uuid>) 
                         <thead>
                             <tr>
                                 <th scope="col">"Device"</th>
-                                <th scope="col">"Download"</th>
-                                <th scope="col">"Upload"</th>
+                                <th scope="col">"Download" <span class="th-sub">" · avg"</span></th>
+                                <th scope="col">"Upload" <span class="th-sub">" · avg"</span></th>
                                 <th scope="col" class="col-latency">"Latency under load"</th>
                             </tr>
                         </thead>
@@ -424,7 +424,7 @@ pub fn GroupResultView(result: GroupResult, #[prop(optional)] me: Option<Uuid>) 
                                                 format!("{s} {u}")
                                             },
                                         );
-                                    let cell = move |v: Option<f64>, share: Option<f64>| {
+                                    let cell = move |v: Option<f64>, share: Option<f64>, peak: Option<f64>| {
                                         let pct = share.map_or(0.0, |s| (s * 100.0).clamp(0.0, 100.0));
                                         view! {
                                             <div class="share-cell">
@@ -435,6 +435,17 @@ pub fn GroupResultView(result: GroupResult, #[prop(optional)] me: Option<Uuid>) 
                                                     }}
                                                 </span>
                                                 <span class="share-pct">{share_text(share)}</span>
+                                                {peak
+                                                    .map(|p| {
+                                                        view! {
+                                                            <span class="share-peak">
+                                                                {move || {
+                                                                    let (s, u) = rate(Some(p));
+                                                                    format!("Peak {s} {u}")
+                                                                }}
+                                                            </span>
+                                                        }
+                                                    })}
                                                 <span class="share-track" aria-hidden="true">
                                                     <span class="share-bar" style=format!("width:{pct:.1}%")></span>
                                                 </span>
@@ -463,8 +474,8 @@ pub fn GroupResultView(result: GroupResult, #[prop(optional)] me: Option<Uuid>) 
                                                     </span>
                                                 </span>
                                             </th>
-                                            <td data-label="Download">{cell(m.download_bps, m.download_share)}</td>
-                                            <td data-label="Upload">{cell(m.upload_bps, m.upload_share)}</td>
+                                            <td data-label="Download">{cell(m.download_bps, m.download_share, m.download_peak_bps)}</td>
+                                            <td data-label="Upload">{cell(m.upload_bps, m.upload_share, m.upload_peak_bps)}</td>
                                             <td class="col-latency">{loaded}</td>
                                         </tr>
                                     }
@@ -496,6 +507,8 @@ mod tests {
             down_loaded_latency_ms: None,
             up_loaded_latency_ms: None,
             incomplete: false,
+            download_peak_bps: None,
+            upload_peak_bps: None,
             series: series
                 .iter()
                 .map(|&(t_ms, down_bps, up_bps)| RateSample {

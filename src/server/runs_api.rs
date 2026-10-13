@@ -172,6 +172,10 @@ pub fn validate_run(run: &RunResult) -> Result<(), String> {
         ("down_loaded_jitter_ms", s.down_loaded_jitter_ms),
         ("up_loaded_latency_ms", s.up_loaded_latency_ms),
         ("up_loaded_jitter_ms", s.up_loaded_jitter_ms),
+        ("download_peak_bps", s.download_peak_bps),
+        ("download_avg_bps", s.download_avg_bps),
+        ("upload_peak_bps", s.upload_peak_bps),
+        ("upload_avg_bps", s.upload_avg_bps),
     ];
     for (name, v) in non_negative {
         if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
@@ -192,6 +196,8 @@ pub fn validate_run(run: &RunResult) -> Result<(), String> {
         p.upload.len(),
         p.down_loaded_latency.len(),
         p.up_loaded_latency.len(),
+        p.download_series.len(),
+        p.upload_series.len(),
     ]
     .iter()
     .any(|&n| n > MAX_POINTS)

@@ -115,6 +115,8 @@ pub struct GroupView {
     pub host: Uuid,
     pub members: Vec<Peer>,
     pub state: GroupState,
+    /// Download (and upload) time of the group's plan (ms).
+    pub direction_ms: Option<u32>,
 }
 
 /// Where this device is in a group test.
@@ -145,6 +147,8 @@ impl GroupStage {
 pub struct Invite {
     pub group: Uuid,
     pub host: String,
+    /// Download (and upload) time of the group's plan (ms).
+    pub direction_ms: Option<u32>,
 }
 
 /// Shared presence state. Cheap to copy.
@@ -180,6 +184,8 @@ pub struct PresenceCtx {
     /// The group plan's steps and its start (`performance.now()` ms).
     pub group_plan: RwSignal<Vec<crate::model::profile::Step>>,
     pub group_starts_at: RwSignal<f64>,
+    /// The length the host picked in the forming group (ms); `None` = unchanged.
+    pub group_length: RwSignal<Option<u32>>,
     #[cfg(feature = "hydrate")]
     handle: StoredValue<Option<crate::engine::presence::PresenceHandle>, LocalStorage>,
     #[cfg(feature = "hydrate")]
@@ -207,6 +213,7 @@ impl PresenceCtx {
             clock: RwSignal::new(0.0),
             group_plan: RwSignal::new(Vec::new()),
             group_starts_at: RwSignal::new(0.0),
+            group_length: RwSignal::new(None),
             #[cfg(feature = "hydrate")]
             handle: StoredValue::new_local(None),
             #[cfg(feature = "hydrate")]
@@ -247,14 +254,18 @@ impl PresenceCtx {
         let _ = label;
     }
 
-    /// "Test together": creates a group with this device as host.
-    pub fn create_group(&self) {
+    /// "Test together": creates a group with this device as host, of
+    /// `direction_ms` each way (`None` = the server default).
+    pub fn create_group(&self, direction_ms: Option<u32>) {
+        self.group_length.set(None);
         #[cfg(feature = "hydrate")]
         if let Some(h) = self.handle()
-            && !h.create_group()
+            && !h.create_group(direction_ms)
         {
             self.notice.set(Some("Not connected to the server".into()));
         }
+        #[cfg(not(feature = "hydrate"))]
+        let _ = direction_ms;
     }
 
     pub fn join_group(&self, group: Uuid) {
@@ -269,10 +280,11 @@ impl PresenceCtx {
         let _ = group;
     }
 
+    /// Host only: starts the group test with the length picked in the lobby.
     pub fn start_group(&self) {
         #[cfg(feature = "hydrate")]
         if let Some(h) = self.handle() {
-            h.start_group();
+            h.start_group(self.group_length.get_untracked());
         }
     }
 
@@ -415,10 +427,18 @@ mod imp {
                 ctx.peers.set(peers);
                 ctx.hidden_active.set(hidden);
             }
-            PresenceEvent::GroupInvite { group, host } => {
+            PresenceEvent::GroupInvite {
+                group,
+                host,
+                direction_ms,
+            } => {
                 // Ignore invites while already in a group.
                 if ctx.group.with_untracked(Option::is_none) {
-                    ctx.invite.set(Some(Invite { group, host }));
+                    ctx.invite.set(Some(Invite {
+                        group,
+                        host,
+                        direction_ms,
+                    }));
                 }
             }
             PresenceEvent::GroupUpdate {
@@ -426,6 +446,7 @@ mod imp {
                 host,
                 members,
                 state,
+                direction_ms,
             } => {
                 let me = ctx.session.get_untracked();
                 let member = members.iter().any(|m| Some(m.id) == me);
@@ -463,6 +484,7 @@ mod imp {
                             host,
                             members,
                             state,
+                            direction_ms,
                         }));
                     }
                     _ => {

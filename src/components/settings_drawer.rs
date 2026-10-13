@@ -1,4 +1,5 @@
-//! Settings drawer (SPEC §7.8): transport, profile, parallel streams, units,
+//! Settings drawer (SPEC §7.8): transport, test length (Automatic profile or a
+//! Timed duration), parallel streams, units,
 //! theme, reduced motion and device name. Escape or the backdrop closes it;
 //! focus moves in on open and back to the settings button on close.
 
@@ -6,10 +7,11 @@ use leptos::html;
 use leptos::prelude::*;
 
 use super::icons;
+use super::length_slider::{LengthSlider, length_summary};
 use super::segmented::Segmented;
 use super::theme_toggle::ThemeSegmented;
 use super::units_toggle::UnitsToggle;
-use crate::ui_state::{MAX_STREAMS, MotionPref, PROFILES, TRANSPORTS, use_ui_state};
+use crate::ui_state::{MAX_STREAMS, MotionPref, PROFILES, TEST_LENGTHS, TRANSPORTS, use_ui_state};
 
 /// Id of the header button that opens the drawer (focus returns there).
 pub const SETTINGS_BUTTON_ID: &str = "settings-button";
@@ -131,15 +133,50 @@ pub fn SettingsDrawer(
                         />
                     </div>
                     <div class="setting">
-                        <span class="setting-label">"Profile"</span>
+                        <span class="setting-label">"Test length"</span>
                         <Segmented
-                            options=pairs(&PROFILES)
-                            value=ui.profile
-                            on_change=Callback::new(move |v| ui.profile.set(v))
-                            label="Profile"
+                            options=pairs(&TEST_LENGTHS)
+                            value=ui.test_length
+                            on_change=Callback::new(move |v| ui.test_length.set(v))
+                            label="Test length"
                             disabled=locked
                         />
                     </div>
+                    <Show
+                        when=move || ui.is_timed()
+                        fallback=move || {
+                            view! {
+                                <div class="setting">
+                                    <span class="setting-label">"Profile"</span>
+                                    <Segmented
+                                        options=pairs(&PROFILES)
+                                        value=ui.profile
+                                        on_change=Callback::new(move |v| ui.profile.set(v))
+                                        label="Profile"
+                                        disabled=locked
+                                    />
+                                </div>
+                            }
+                        }
+                    >
+                        <div class="setting setting-length">
+                            <label class="setting-label" for="timed-length">
+                                "Duration"
+                            </label>
+                            <LengthSlider
+                                id="timed-length"
+                                value=Signal::derive(move || ui.effective_timed_ms())
+                                on_change=Callback::new(move |ms| {
+                                    ui.timed_override.set(None);
+                                    ui.timed_ms.set(ms);
+                                })
+                                disabled=locked
+                            />
+                            <p class="length-summary">
+                                {move || length_summary(ui.effective_timed_ms())}
+                            </p>
+                        </div>
+                    </Show>
                     <div class="setting">
                         <span class="setting-label">"Parallel streams"</span>
                         {move || {
@@ -163,6 +200,8 @@ pub fn SettingsDrawer(
                         {move || {
                             if locked.get() {
                                 "Test settings apply to the next run."
+                            } else if ui.is_timed() {
+                                "Timed keeps the link busy for the whole time and reports the peak and average speed: good for spotting throttling, and for testing together."
                             } else {
                                 "Quick takes about 5 s. Extended adds 4 streams for the largest payloads."
                             }

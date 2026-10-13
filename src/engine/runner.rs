@@ -20,6 +20,10 @@
 //!   each short request), so `loaded_request_min_ms` only drops the first
 //!   250 ms of the step.
 //! - `Pause`: waits until the step's scheduled end.
+//!
+//! Timed steps are exempt from the overall time cap (`Config::max_test_ms`):
+//! they end on their schedule, so a 5 min timed test runs in full. Each timed
+//! transfer's window is recorded for the peak/average (SPEC §5.4).
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -334,7 +338,7 @@ impl Run<'_> {
             Step::TimedLatency { duration_ms } => {
                 let end = self.timed_window(duration_ms).await;
                 let mut done = 0;
-                while now() < end && !ramp.time_up(self.elapsed()) {
+                while now() < end && !ramp.time_up_for(step, self.elapsed()) {
                     self.idle_probe().await?;
                     done += 1;
                     let left = end - now();
@@ -346,6 +350,14 @@ impl Run<'_> {
             }
             Step::TimedDownload { duration_ms } | Step::TimedUpload { duration_ms } => {
                 let end = self.timed_window(duration_ms).await;
+                if let Some(dir) = step.direction() {
+                    let start = end - f64::from(duration_ms);
+                    self.measurements.borrow_mut().push_timed_window(
+                        dir,
+                        start - self.t0,
+                        end - self.t0,
+                    );
+                }
                 self.timed_transfer(step, end, ramp).await
             }
             Step::Pause { duration_ms } => {
@@ -424,7 +436,7 @@ impl Run<'_> {
     async fn with_side_tasks<T>(&self, dir: Direction, main: impl Future<Output = T>) -> T {
         let side = async {
             join(
-                live_loop(&self.link, dir, self.emit),
+                live_loop(&self.link, dir, self.t0, &self.measurements, self.emit),
                 probe_loop(
                     &self.link,
                     dir,
@@ -488,7 +500,7 @@ impl Run<'_> {
             let mut done = 0;
             let result = loop {
                 let left = end - now();
-                if left < TIMED_MIN_REMAINING_MS || ramp.time_up(self.elapsed()) {
+                if left < TIMED_MIN_REMAINING_MS || ramp.time_up_for(step, self.elapsed()) {
                     break Ok(status_of(done));
                 }
                 let s = match self.request_in_step(dir, size, streams, false).await {

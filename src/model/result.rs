@@ -61,6 +61,14 @@ pub struct Summary {
     pub up_loaded_jitter_ms: Option<f64>,
     /// `None` = unavailable (WebRTC failed or not run), not 0%.
     pub packet_loss_ratio: Option<f64>,
+    /// Timed tests only (SPEC §5.4): the highest throughput over any 1 s of the timed
+    /// download, from the live byte counter ([`peak_bps`]). `None` for size-based runs.
+    pub download_peak_bps: Option<f64>,
+    /// Timed tests only: bytes moved over the timed download window, after its first
+    /// second (ramp-up), divided by that time ([`window_avg_bps`]).
+    pub download_avg_bps: Option<f64>,
+    pub upload_peak_bps: Option<f64>,
+    pub upload_avg_bps: Option<f64>,
 }
 
 impl Summary {
@@ -157,6 +165,120 @@ pub struct Points {
     pub down_loaded_latency: Vec<f64>,
     pub up_loaded_latency: Vec<f64>,
     pub packet_loss: Option<PacketLossCounts>,
+    /// Throughput over time from the live byte counter, at most
+    /// [`MAX_SERIES_POINTS`] points per direction (see [`rate_series`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub download_series: Vec<RatePoint>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub upload_series: Vec<RatePoint>,
+}
+
+/// One point of a run's throughput-over-time series.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RatePoint {
+    /// Milliseconds since the run started (end of the interval).
+    pub t_ms: u32,
+    pub bps: f64,
+}
+
+/// One reading of a direction's cumulative byte counter during a transfer step.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProgressSample {
+    /// Milliseconds since the run started.
+    pub t_ms: f64,
+    /// Bytes moved in this direction since the run started.
+    pub bytes: u64,
+}
+
+/// The scheduled window of a timed transfer step (ms since the run started).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TimedWindow {
+    pub direction: Direction,
+    pub start_ms: f64,
+    pub end_ms: f64,
+}
+
+/// Most points per direction in [`Points::download_series`] / `upload_series`.
+pub const MAX_SERIES_POINTS: usize = 600;
+/// Narrowest interval of a stored series point.
+pub const SERIES_MIN_INTERVAL_MS: f64 = 250.0;
+/// Consecutive counter readings further apart than this start a new segment
+/// (between steps): no rate is computed across the gap.
+pub const SERIES_GAP_MS: f64 = 1000.0;
+/// Window of the peak throughput.
+pub const PEAK_WINDOW_MS: f64 = 1000.0;
+/// The start of a timed window left out of the average (TCP ramp-up and the
+/// request size growth); at most a fifth of the window.
+pub const AVG_RAMP_SKIP_MS: f64 = 1000.0;
+
+/// Downsamples cumulative counter readings into a rate series of at most
+/// `max_points` points. Each point is the rate since the previous point, over at
+/// least [`SERIES_MIN_INTERVAL_MS`] (wider for long runs, so the cap holds).
+pub fn rate_series(samples: &[ProgressSample], max_points: usize) -> Vec<RatePoint> {
+    let (Some(first), Some(last)) = (samples.first(), samples.last()) else {
+        return Vec::new();
+    };
+    let span = (last.t_ms - first.t_ms).max(0.0);
+    let width = (span / max_points.max(1) as f64).max(SERIES_MIN_INTERVAL_MS);
+    let mut out = Vec::new();
+    let mut anchor = *first;
+    let mut prev = *first;
+    for s in &samples[1..] {
+        if s.t_ms - prev.t_ms > SERIES_GAP_MS || s.bytes < prev.bytes {
+            anchor = *s;
+        } else if s.t_ms - anchor.t_ms >= width {
+            let secs = (s.t_ms - anchor.t_ms) / 1000.0;
+            out.push(RatePoint {
+                t_ms: s.t_ms.round().max(0.0) as u32,
+                bps: s.bytes.saturating_sub(anchor.bytes) as f64 * 8.0 / secs,
+            });
+            anchor = *s;
+        }
+        prev = *s;
+    }
+    if out.len() > max_points {
+        // Gaps can push the count slightly over the cap: thin evenly.
+        let step = out.len().div_ceil(max_points.max(1));
+        out = out.into_iter().step_by(step).collect();
+    }
+    out
+}
+
+/// The highest rate over any [`PEAK_WINDOW_MS`] (or slightly longer, at the
+/// readings' spacing) within `[start_ms, end_ms]`. `None` when the readings
+/// span less than one window.
+pub fn peak_bps(samples: &[ProgressSample], start_ms: f64, end_ms: f64) -> Option<f64> {
+    let inside: Vec<&ProgressSample> = samples
+        .iter()
+        .filter(|s| s.t_ms >= start_ms && s.t_ms <= end_ms)
+        .collect();
+    let mut best: Option<f64> = None;
+    let mut j = 0;
+    for i in 1..inside.len() {
+        // The latest reading at least one window before reading `i`.
+        while j + 1 < i && inside[i].t_ms - inside[j + 1].t_ms >= PEAK_WINDOW_MS {
+            j += 1;
+        }
+        let dt = inside[i].t_ms - inside[j].t_ms;
+        if dt >= PEAK_WINDOW_MS {
+            let bytes = inside[i].bytes.saturating_sub(inside[j].bytes);
+            let bps = bytes as f64 * 8.0 / (dt / 1000.0);
+            best = Some(best.map_or(bps, |b| b.max(bps)));
+        }
+    }
+    best
+}
+
+/// Bytes moved between the first reading after the ramp-up
+/// (`start_ms + min(AVG_RAMP_SKIP_MS, window / 5)`) and the last reading at or
+/// before `end_ms`, divided by the time between them. `None` with less than
+/// half a second of readings.
+pub fn window_avg_bps(samples: &[ProgressSample], start_ms: f64, end_ms: f64) -> Option<f64> {
+    let skip = AVG_RAMP_SKIP_MS.min((end_ms - start_ms) / 5.0).max(0.0);
+    let a = samples.iter().find(|s| s.t_ms >= start_ms + skip)?;
+    let b = samples.iter().rev().find(|s| s.t_ms <= end_ms)?;
+    let dt = b.t_ms - a.t_ms;
+    (dt >= 500.0).then(|| b.bytes.saturating_sub(a.bytes) as f64 * 8.0 / (dt / 1000.0))
 }
 
 /// What happened to one profile step.
@@ -167,6 +289,9 @@ pub struct PhaseRecord {
     pub bytes: Option<u64>,
     pub count: u32,
     pub status: PhaseStatus,
+    /// Scheduled length of a timed step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u32>,
 }
 
 impl PhaseRecord {
@@ -176,7 +301,18 @@ impl PhaseRecord {
             bytes: step.bytes(),
             count: step.count(),
             status,
+            duration_ms: step.duration_ms(),
         }
+    }
+}
+
+impl RunResult {
+    /// Download (and upload) time of a timed run, from its phases.
+    pub fn timed_direction_ms(&self) -> Option<u32> {
+        self.phases
+            .iter()
+            .find(|p| p.kind == Phase::Download)
+            .and_then(|p| p.duration_ms)
     }
 }
 
@@ -252,6 +388,11 @@ pub struct Measurements {
     pub up_loaded_latency: Vec<LoadedLatencySample>,
     /// `None` = packet loss unavailable.
     pub packet_loss: Option<PacketLossCounts>,
+    /// Cumulative byte counter readings during download / upload steps.
+    pub download_progress: Vec<ProgressSample>,
+    pub upload_progress: Vec<ProgressSample>,
+    /// Windows of the timed transfer steps.
+    pub timed_windows: Vec<TimedWindow>,
 }
 
 impl Measurements {
@@ -292,6 +433,44 @@ impl Measurements {
 
     pub fn set_packet_loss(&mut self, counts: Option<PacketLossCounts>) {
         self.packet_loss = counts;
+    }
+
+    /// Records the cumulative byte counter of `dir` at `t_ms` (since the run started).
+    pub fn push_progress(&mut self, dir: Direction, t_ms: f64, bytes: u64) {
+        let sample = ProgressSample { t_ms, bytes };
+        match dir {
+            Direction::Download => self.download_progress.push(sample),
+            Direction::Upload => self.upload_progress.push(sample),
+        }
+    }
+
+    /// Records the scheduled window of a timed transfer step.
+    pub fn push_timed_window(&mut self, direction: Direction, start_ms: f64, end_ms: f64) {
+        self.timed_windows.push(TimedWindow {
+            direction,
+            start_ms,
+            end_ms,
+        });
+    }
+
+    fn progress(&self, dir: Direction) -> &[ProgressSample] {
+        match dir {
+            Direction::Download => &self.download_progress,
+            Direction::Upload => &self.upload_progress,
+        }
+    }
+
+    /// Peak and average throughput over the first timed window of `dir`;
+    /// `(None, None)` without one (size-based runs).
+    pub fn timed_rates(&self, dir: Direction) -> (Option<f64>, Option<f64>) {
+        let Some(w) = self.timed_windows.iter().find(|w| w.direction == dir) else {
+            return (None, None);
+        };
+        let p = self.progress(dir);
+        (
+            peak_bps(p, w.start_ms, w.end_ms),
+            window_avg_bps(p, w.start_ms, w.end_ms),
+        )
     }
 
     fn samples(&self, dir: Direction) -> &[BandwidthSample] {
@@ -360,6 +539,8 @@ impl Measurements {
             down_loaded_latency: self.loaded_latency(Direction::Download, config),
             up_loaded_latency: self.loaded_latency(Direction::Upload, config),
             packet_loss: self.packet_loss,
+            download_series: rate_series(&self.download_progress, MAX_SERIES_POINTS),
+            upload_series: rate_series(&self.upload_progress, MAX_SERIES_POINTS),
         }
     }
 }
@@ -371,6 +552,8 @@ pub fn summarize(m: &Measurements, config: &Config) -> Summary {
     let lat = |v: &[f64]| stats::percentile(v, config.latency_percentile);
     let down_loaded = m.loaded_latency(Direction::Download, config);
     let up_loaded = m.loaded_latency(Direction::Upload, config);
+    let (download_peak_bps, download_avg_bps) = m.timed_rates(Direction::Download);
+    let (upload_peak_bps, upload_avg_bps) = m.timed_rates(Direction::Upload);
     Summary {
         download_bps: bw(Direction::Download),
         upload_bps: bw(Direction::Upload),
@@ -381,6 +564,10 @@ pub fn summarize(m: &Measurements, config: &Config) -> Summary {
         up_loaded_latency_ms: lat(&up_loaded),
         up_loaded_jitter_ms: stats::jitter(&up_loaded),
         packet_loss_ratio: m.packet_loss.and_then(|c| c.ratio()),
+        download_peak_bps,
+        download_avg_bps,
+        upload_peak_bps,
+        upload_avg_bps,
     }
 }
 
@@ -412,6 +599,11 @@ pub struct GroupMemberInput {
     pub incomplete: bool,
     #[serde(default)]
     pub series: Vec<RateSample>,
+    /// Highest 1 s rate within the download / upload window.
+    #[serde(default)]
+    pub download_peak_bps: Option<f64>,
+    #[serde(default)]
+    pub upload_peak_bps: Option<f64>,
 }
 
 /// A member's result within a group test.
@@ -432,6 +624,12 @@ pub struct GroupMember {
     pub incomplete: bool,
     #[serde(default)]
     pub series: Vec<RateSample>,
+    /// Highest 1 s rate within the download / upload window (`download_bps` is the
+    /// average over the window, after its first second).
+    #[serde(default)]
+    pub download_peak_bps: Option<f64>,
+    #[serde(default)]
+    pub upload_peak_bps: Option<f64>,
 }
 
 /// Result of a synchronized group test (SPEC §5.11), computed by the server.
@@ -515,6 +713,8 @@ impl GroupResult {
                 up_loaded_latency_ms: m.up_loaded_latency_ms,
                 incomplete: m.incomplete,
                 series: m.series,
+                download_peak_bps: m.download_peak_bps,
+                upload_peak_bps: m.upload_peak_bps,
             })
             .collect();
 
@@ -713,7 +913,8 @@ mod tests {
                 kind: Phase::Latency,
                 bytes: None,
                 count: 1,
-                status: PhaseStatus::Done
+                status: PhaseStatus::Done,
+                duration_ms: None,
             }
         );
         // The second step (20 idle probes) hasn't run yet.
@@ -792,6 +993,114 @@ mod tests {
         assert!(!r.concurrency.overlapped());
     }
 
+    #[test]
+    fn old_summary_json_has_no_timed_rates() {
+        let s: Summary = serde_json::from_str(r#"{"download_bps":1e8,"upload_bps":2e7}"#).unwrap();
+        assert_eq!(s.download_bps, Some(1e8));
+        assert_eq!(s.download_peak_bps, None);
+        assert_eq!(s.upload_avg_bps, None);
+        let s2: Summary = serde_json::from_str(
+            &serde_json::to_string(&Summary {
+                download_peak_bps: Some(9e8),
+                upload_avg_bps: Some(1e8),
+                ..s
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(s2.download_peak_bps, Some(9e8));
+        assert_eq!(s2.upload_avg_bps, Some(1e8));
+        // Old points without a series.
+        let p: Points = serde_json::from_str(r#"{"latency":[1.0]}"#).unwrap();
+        assert!(p.download_series.is_empty());
+        assert!(!serde_json::to_string(&p).unwrap().contains("series"));
+    }
+
+    /// Readings every 100 ms at `mbps(t)` Mbit/s.
+    fn readings(from_ms: f64, to_ms: f64, mbps: impl Fn(f64) -> f64) -> Vec<ProgressSample> {
+        let mut out = Vec::new();
+        let mut bytes = 0.0;
+        let mut t = from_ms;
+        while t <= to_ms + 1e-9 {
+            out.push(ProgressSample {
+                t_ms: t,
+                bytes: bytes as u64,
+            });
+            bytes += mbps(t) * 1e6 / 8.0 * 0.1;
+            t += 100.0;
+        }
+        out
+    }
+
+    #[test]
+    fn peak_and_average_of_a_timed_window() {
+        // 2 s ramp at 100 Mbps, then 900 Mbps, with a 1.5 s burst at 1000 Mbps.
+        let s = readings(1000.0, 11_000.0, |t| {
+            if t < 2000.0 {
+                100.0
+            } else if (5000.0..6500.0).contains(&t) {
+                1000.0
+            } else {
+                900.0
+            }
+        });
+        let peak = peak_bps(&s, 1000.0, 11_000.0).unwrap();
+        assert!((peak - 1e9).abs() < 1e6, "{peak}");
+        // The first second (100 Mbps) is skipped: 8 s at 900 + 1.5 s at +100, over 9 s.
+        let avg = window_avg_bps(&s, 1000.0, 11_000.0).unwrap();
+        let expected = (9.0 * 900e6 + 1.5 * 100e6) / 9.0;
+        assert!((avg - expected).abs() < 2e6, "{avg} vs {expected}");
+        // Too short.
+        assert_eq!(peak_bps(&s[..5], 0.0, 1e9), None);
+        assert_eq!(window_avg_bps(&s[..3], 1000.0, 1300.0), None);
+        assert_eq!(window_avg_bps(&[], 0.0, 1.0), None);
+    }
+
+    #[test]
+    fn measurements_fill_timed_rates_only_for_timed_windows() {
+        let mut m = Measurements::new();
+        for s in readings(0.0, 5000.0, |_| 400.0) {
+            m.push_progress(Direction::Download, s.t_ms, s.bytes);
+        }
+        let cfg = Config::default();
+        let sized = summarize(&m, &cfg);
+        assert_eq!(sized.download_peak_bps, None);
+        assert_eq!(sized.download_avg_bps, None);
+        m.push_timed_window(Direction::Download, 0.0, 5000.0);
+        let timed = summarize(&m, &cfg);
+        assert!((timed.download_peak_bps.unwrap() - 4e8).abs() < 1e6);
+        assert!((timed.download_avg_bps.unwrap() - 4e8).abs() < 1e6);
+        assert_eq!(timed.upload_peak_bps, None);
+        let p = m.points(&cfg);
+        assert_eq!(p.download_series.len(), 16);
+        assert!(p.download_series.iter().all(|r| (r.bps - 4e8).abs() < 1e6));
+        assert!(p.upload_series.is_empty());
+    }
+
+    #[test]
+    fn rate_series_is_capped_and_splits_at_gaps() {
+        // 10 minutes of readings every 100 ms.
+        let s = readings(0.0, 600_000.0, |_| 100.0);
+        let r = rate_series(&s, MAX_SERIES_POINTS);
+        assert!(r.len() <= MAX_SERIES_POINTS && r.len() >= MAX_SERIES_POINTS - 2);
+        assert!(r.iter().all(|p| (p.bps - 1e8).abs() < 1e6));
+        // A gap between two steps produces no point spanning it.
+        let mut a = readings(0.0, 1000.0, |_| 100.0);
+        let last = a.last().unwrap().bytes;
+        a.extend(
+            readings(0.0, 1000.0, |_| 100.0)
+                .into_iter()
+                .map(|p| ProgressSample {
+                    t_ms: p.t_ms + 5000.0,
+                    bytes: p.bytes + last,
+                }),
+        );
+        let r = rate_series(&a, 100);
+        assert_eq!(r.len(), 6);
+        assert!(r.iter().all(|p| (p.bps - 1e8).abs() < 1e6));
+        assert!(rate_series(&[], 10).is_empty());
+    }
+
     fn member(n: u128, down: f64, up: f64, incomplete: bool) -> GroupMemberInput {
         GroupMemberInput {
             session: Uuid::from_u128(n),
@@ -808,6 +1117,8 @@ mod tests {
                 down_bps: down,
                 up_bps: 0.0,
             }],
+            download_peak_bps: None,
+            upload_peak_bps: None,
         }
     }
 

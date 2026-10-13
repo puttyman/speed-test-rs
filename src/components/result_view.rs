@@ -112,6 +112,11 @@ pub fn SharedBadge(
 
 /// Display name of a profile key.
 pub fn profile_label(p: &str) -> String {
+    match p {
+        "timed" => return "Timed".into(),
+        "concurrent" => return "Test together".into(),
+        _ => {}
+    }
     PROFILES
         .iter()
         .find(|(k, _)| *k == p)
@@ -134,11 +139,21 @@ pub fn ResultTiles(#[prop(into)] result: Signal<Option<RunResult>>) -> impl Into
     let samples = move |f: fn(&RunResult) -> Vec<f64>| {
         Signal::derive(move || result.with(|r| r.as_ref().map(f).unwrap_or_default()))
     };
-    let loaded = move |f: fn(&RunResult) -> Option<f64>| {
+    let ui = crate::ui_state::use_ui_state();
+    // Timed runs show the peak and average; others the latency under load.
+    let loaded = move |f: fn(&RunResult) -> Option<f64>,
+                       timed: fn(&RunResult) -> (Option<f64>, Option<f64>)| {
         Signal::derive(move || {
-            result.with(|r| r.as_ref().and_then(f)).map(|m| {
-                let (s, u) = format_ms(m);
-                format!("Under load {s} {u}")
+            let unit = ui.units.get();
+            result.with(|r| {
+                let r = r.as_ref()?;
+                let (peak, avg) = timed(r);
+                crate::pages::test::peak_avg_text(peak, avg, unit).or_else(|| {
+                    f(r).map(|m| {
+                        let (s, u) = format_ms(m);
+                        format!("Under load {s} {u}")
+                    })
+                })
             })
         })
     };
@@ -167,7 +182,10 @@ pub fn ResultTiles(#[prop(into)] result: Signal<Option<RunResult>>) -> impl Into
                 value=pick(|r| r.summary.download_bps)
                 series=Series::Download
                 samples=samples(|r| r.points.download.iter().map(|p| p.bps).collect())
-                detail=loaded(|r| r.summary.down_loaded_latency_ms)
+                detail=loaded(
+                    |r| r.summary.down_loaded_latency_ms,
+                    |r| (r.summary.download_peak_bps, r.summary.download_avg_bps),
+                )
                 index=0
             />
             <MetricTile
@@ -177,7 +195,10 @@ pub fn ResultTiles(#[prop(into)] result: Signal<Option<RunResult>>) -> impl Into
                 value=pick(|r| r.summary.upload_bps)
                 series=Series::Upload
                 samples=samples(|r| r.points.upload.iter().map(|p| p.bps).collect())
-                detail=loaded(|r| r.summary.up_loaded_latency_ms)
+                detail=loaded(
+                    |r| r.summary.up_loaded_latency_ms,
+                    |r| (r.summary.upload_peak_bps, r.summary.upload_avg_bps),
+                )
                 index=1
             />
             <MetricTile
@@ -291,6 +312,49 @@ pub fn ResultDetails(
     }
 }
 
+/// The live-chart points of a saved run's throughput series.
+pub fn series_points(r: &RunResult) -> Vec<super::charts::LivePoint> {
+    use crate::model::profile::Direction;
+    let mut pts: Vec<super::charts::LivePoint> = r
+        .points
+        .download_series
+        .iter()
+        .map(|p| (p, Direction::Download))
+        .chain(
+            r.points
+                .upload_series
+                .iter()
+                .map(|p| (p, Direction::Upload)),
+        )
+        .map(|(p, direction)| super::charts::LivePoint {
+            t_ms: f64::from(p.t_ms),
+            bps: p.bps,
+            direction,
+        })
+        .collect();
+    pts.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
+    pts
+}
+
+/// Throughput over time of a saved run (absent for runs saved before the
+/// series was stored).
+#[component]
+pub fn ThroughputCard(#[prop(into)] result: Signal<Option<RunResult>>) -> impl IntoView {
+    let points =
+        Signal::derive(move || result.with(|r| r.as_ref().map(series_points).unwrap_or_default()));
+    view! {
+        <Show when=move || points.with(|p| !p.is_empty())>
+            <section class="card live-card reveal" style=reveal_style(5) aria-label="Throughput over time">
+                <super::charts::LiveArea
+                    points=points
+                    ticks=Signal::stored(Vec::new())
+                    empty_text=Signal::stored(String::new())
+                />
+            </section>
+        </Show>
+    }
+}
+
 /// Facts about a saved run: device, time, connection, profile, overlap.
 #[component]
 pub fn RunInfoCard(result: RunResult) -> impl IntoView {
@@ -327,8 +391,17 @@ pub fn RunInfoCard(result: RunResult) -> impl IntoView {
                 {row(
                     "Profile",
                     format!(
-                        "{} · {} stream{}",
+                        "{}{} · {} stream{}",
                         profile_label(&result.profile),
+                        result
+                            .timed_direction_ms()
+                            .map(|ms| {
+                                format!(
+                                    " · {} each way",
+                                    super::length_slider::format_length(ms),
+                                )
+                            })
+                            .unwrap_or_default(),
                         result.streams,
                         if result.streams == 1 { "" } else { "s" },
                     ),

@@ -182,13 +182,23 @@ pub enum ClientMsg {
     SetHidden {
         hidden: bool,
     },
-    GroupCreate,
+    /// Creates a group with the sender as host. `direction_ms`: the download (and
+    /// upload) time the members will run, in ms; the server clamps it to 2–300 s and
+    /// uses `--group-test-seconds` when absent.
+    GroupCreate {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction_ms: Option<u32>,
+    },
     GroupJoin {
         group: Uuid,
     },
     GroupLeave,
-    /// Host only.
-    GroupStart,
+    /// Host only. `direction_ms` (optional) replaces the length chosen at
+    /// `GroupCreate` (same clamp).
+    GroupStart {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction_ms: Option<u32>,
+    },
     /// Latency probe (probe socket).
     Ping {
         seq: u32,
@@ -266,6 +276,9 @@ pub enum ServerMsg {
     GroupInvite {
         group: Uuid,
         host: String,
+        /// Download (and upload) time of the group's plan, in ms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction_ms: Option<u32>,
     },
     GroupUpdate {
         group: Uuid,
@@ -273,6 +286,9 @@ pub enum ServerMsg {
         host: Uuid,
         members: Vec<Peer>,
         state: GroupState,
+        /// Download (and upload) time of the group's plan, in ms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction_ms: Option<u32>,
     },
     /// Start `plan` in `starts_in_ms`.
     GroupStart {
@@ -379,10 +395,16 @@ mod tests {
                 label: None,
             },
             ClientMsg::SetHidden { hidden: true },
-            ClientMsg::GroupCreate,
+            ClientMsg::GroupCreate { direction_ms: None },
+            ClientMsg::GroupCreate {
+                direction_ms: Some(60_000),
+            },
             ClientMsg::GroupJoin { group: uuid(9) },
             ClientMsg::GroupLeave,
-            ClientMsg::GroupStart,
+            ClientMsg::GroupStart { direction_ms: None },
+            ClientMsg::GroupStart {
+                direction_ms: Some(3000),
+            },
             ClientMsg::Ping { seq: 1 },
             ClientMsg::Download {
                 id: 3,
@@ -418,6 +440,8 @@ mod tests {
                 up_loaded_latency_ms: None,
                 incomplete: false,
                 series: vec![],
+                download_peak_bps: Some(3.2e8),
+                upload_peak_bps: None,
             }],
             None,
         );
@@ -459,12 +483,14 @@ mod tests {
             ServerMsg::GroupInvite {
                 group: uuid(9),
                 host: "Office Mac".into(),
+                direction_ms: Some(60_000),
             },
             ServerMsg::GroupUpdate {
                 group: uuid(9),
                 host: uuid(1),
                 members: vec![peer()],
                 state: GroupState::Forming,
+                direction_ms: Some(60_000),
             },
             ServerMsg::GroupStart {
                 group: uuid(9),
@@ -509,7 +535,34 @@ mod tests {
             .to_json(),
             r#"{"t":"download","id":2,"bytes":100000}"#
         );
-        assert_eq!(ClientMsg::GroupCreate.to_json(), r#"{"t":"group_create"}"#);
+        assert_eq!(
+            ClientMsg::GroupCreate { direction_ms: None }.to_json(),
+            r#"{"t":"group_create"}"#
+        );
+        assert_eq!(
+            ClientMsg::GroupStart {
+                direction_ms: Some(30_000)
+            }
+            .to_json(),
+            r#"{"t":"group_start","direction_ms":30000}"#
+        );
+        // Messages of older clients and servers, without the length.
+        let old_create: ClientMsg = serde_json::from_str(r#"{"t":"group_create"}"#).unwrap();
+        assert_eq!(old_create, ClientMsg::GroupCreate { direction_ms: None });
+        let old_start: ClientMsg = serde_json::from_str(r#"{"t":"group_start"}"#).unwrap();
+        assert_eq!(old_start, ClientMsg::GroupStart { direction_ms: None });
+        let invite: ServerMsg = serde_json::from_str(
+            r#"{"t":"group_invite","group":"00000000-0000-0000-0000-000000000009","host":"Mac"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            invite,
+            ServerMsg::GroupInvite {
+                group: uuid(9),
+                host: "Mac".into(),
+                direction_ms: None
+            }
+        );
         assert_eq!(ClientMsg::Abort.to_json(), r#"{"t":"abort"}"#);
         assert_eq!(
             ClientMsg::Hello {

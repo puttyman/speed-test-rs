@@ -271,6 +271,8 @@ impl RunRow {
                 up_loaded_latency_ms: self.up_loaded_latency_ms,
                 up_loaded_jitter_ms: self.up_loaded_jitter_ms,
                 packet_loss_ratio: self.packet_loss_ratio,
+                // Not denormalised: only in `detail_json`.
+                ..Summary::default()
             },
             scores: ScoreClasses {
                 streaming: class(self.score_streaming),
@@ -1031,6 +1033,10 @@ fn median_summary<'a>(summaries: impl Iterator<Item = &'a Summary> + Clone) -> S
         up_loaded_latency_ms: med(|s| s.up_loaded_latency_ms),
         up_loaded_jitter_ms: med(|s| s.up_loaded_jitter_ms),
         packet_loss_ratio: med(|s| s.packet_loss_ratio),
+        download_peak_bps: med(|s| s.download_peak_bps),
+        download_avg_bps: med(|s| s.download_avg_bps),
+        upload_peak_bps: med(|s| s.upload_peak_bps),
+        upload_avg_bps: med(|s| s.upload_avg_bps),
     }
 }
 
@@ -1169,6 +1175,7 @@ pub(crate) mod test_support {
             up_loaded_latency_ms: Some(9.0),
             up_loaded_jitter_ms: Some(1.1),
             packet_loss_ratio: Some(0.0),
+            ..Summary::default()
         };
         RunResult {
             id: Uuid::now_v7(),
@@ -1199,6 +1206,7 @@ pub(crate) mod test_support {
                 down_loaded_latency: vec![11.0, 12.5, 14.0],
                 up_loaded_latency: vec![8.0, 9.0],
                 packet_loss: Some(PacketLossCounts::new(1000, 1000)),
+                ..Points::default()
             },
             phases: vec![
                 PhaseRecord {
@@ -1206,18 +1214,21 @@ pub(crate) mod test_support {
                     bytes: None,
                     count: 20,
                     status: PhaseStatus::Done,
+                    duration_ms: None,
                 },
                 PhaseRecord {
                     kind: Phase::Download,
                     bytes: Some(10_000_000),
                     count: 8,
                     status: PhaseStatus::Done,
+                    duration_ms: None,
                 },
                 PhaseRecord {
                     kind: Phase::PacketLoss,
                     bytes: None,
                     count: 0,
                     status: PhaseStatus::Skipped,
+                    duration_ms: None,
                 },
             ],
             duration_ms: 18_250,
@@ -1673,6 +1684,8 @@ mod tests {
             up_loaded_latency_ms: Some(15.0),
             incomplete: false,
             series: Vec::new(),
+            download_peak_bps: None,
+            upload_peak_bps: None,
         };
         let result = GroupResult::compute(
             group_id,

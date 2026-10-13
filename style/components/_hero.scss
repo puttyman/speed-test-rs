@@ -251,3 +251,38 @@
 	text-decoration: line-through;
 	text-decoration-color: var(--color-border-strong);
 }
+
+// Countdown ring of a timed step, before the caption.
+.countdown-ring {
+	display: inline-block;
+	width: 1.1em;
+	height: 1.1em;
+	margin-right: 0.45em;
+	vertical-align: -0.2em;
+	transform: rotate(-90deg);
+
+	circle {
+		fill: none;
+		stroke-width: 2.5;
+	}
+
+	.ring-track {
+		stroke: var(--color-border);
+	}
+
+	.ring-fill {
+		stroke: var(--color-text);
+		stroke-linecap: round;
+		transition: stroke-dashoffset 250ms linear;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.countdown-ring .ring-fill {
+		transition: none;
+	}
+}
+
+:root[data-motion="reduce"] .countdown-ring .ring-fill {
+	transition: none;
+}

@@ -184,12 +184,42 @@ direction is skipped, so a slow download can never use up the upload's time.
 
 **Time cap**: one test is capped at **60 s** of measurement time (configurable). When the
 cap is reached, the remaining transfers are skipped and marked `skipped` in the result.
-Packet loss still runs: it's short and bounded by its own timeouts.
+Packet loss still runs: it's short and bounded by its own timeouts. **Timed steps** (below and
+§5.11) are exempt too: they end on their own schedule, so a 5 min timed test runs in full.
 
 **Profiles**: `quick` (latency, then downloads and uploads up to 1 MB, about 5 s; no packet
 loss), `standard` (default), `extended` (standard plus 4 parallel streams for the transfers
-of 50 MB and up). Profiles are defined as data in `model::profile`, so a custom JSON sequence
-can be passed through the API.
+of 50 MB and up), `timed` (below) and `concurrent` (group tests, §5.11). Profiles are defined
+as data in `model::profile`, so a custom JSON sequence can be passed through the API.
+
+**Timed profile** (`Profile::timed(direction_ms)`, the **Timed** test length in the settings,
+§7.8): instead of a size ramp, the link is kept busy for a fixed time, to find the sustained
+speed, spot QoS shaping or throttling (full speed for 10 s, then a drop) and stress an access
+point with several devices.
+
+| # | Phase | Parameters |
+|---|---|---|
+| 1 | Latency (warm-up) | 1 probe |
+| 2 | Latency (idle) | 20 probes |
+| 3 | Download | continuous for `direction_ms` |
+| 4 | Upload | continuous for `direction_ms` |
+| 5 | Packet loss | as in `standard` |
+
+`direction_ms` is 10 s to 5 min (`Profile::timed` clamps to `10_000..=300_000`; the slider
+offers 10, 15, 20, 30, 45 s, 1, 2, 3, 4 and 5 min). `by_name("timed")` is 30 s. The timed
+transfers are the group test's: back-to-back requests, each sized from the previous one's rate
+to end about when the step does, with loaded-latency probes throughout (see `engine::runner`).
+`download_bps` / `upload_bps` stay the p90 of those requests; a timed run adds the **peak**
+and **average** (§6.3):
+
+- **Average** = bytes moved over the step's window, after its first second (TCP ramp-up and
+  the request-size growth; at most a fifth of the window), divided by that time.
+- **Peak** = the highest rate over any **1 s** of the window, from the live byte counter the
+  engine reads every 100 ms (the same counter as the ~250 ms live meter, but over a 1 s
+  window so one burst of frames can't inflate it).
+
+Size-based runs leave both `None`: their requests have gaps between them, so neither would
+mean the same thing.
 
 ### 5.4 Latency and jitter (idle)
 
@@ -325,8 +355,11 @@ speed.
 
 **2. Group test (synchronized).** To measure shared capacity on purpose:
 1. Any device taps **Test together**. This creates a group, and every other open device shows
-   an invite ("Office Mac wants to test together · Join").
-2. Devices join. The host sees the member list and taps **Start**.
+   an invite ("Office Mac wants to test together · Join", with "Test together · 1 min each
+   way" under it).
+2. Devices join. The host sees the member list, picks the **length** with the same slider
+   as the Timed setting (§7.8; it starts at the host's Timed length, or the server default
+   with Automatic), and taps **Start**. Members see the length in the lobby ("1 min each way").
 3. The server sends `GroupStart { starts_in_ms: 3000, plan }` to all members, and each shows a
    3-2-1 countdown. LAN delivery jitter (a few ms) is negligible against phase lengths of seconds.
 4. Group mode uses the **time-based `concurrent` profile** instead of the size ramp, so all
@@ -336,8 +369,14 @@ speed.
    3. 2 s pause
    4. upload for 10 s
    5. packet loss, optional
+
+   10 s is the default (`--group-test-seconds`). The host's length is sent as
+   `direction_ms` in `GroupCreate` (and may be changed with `GroupStart`); the server clamps
+   it to **2 s – 5 min** (`Profile::concurrent_for`; plans under 10 s use 1 s of latency and a
+   0.5 s pause), so a client can't hold the link longer than that.
 5. **The server computes the results** from its own byte counters over the common window:
-   - per-device throughput
+   - per-device throughput (the average over the window after its first second) and **peak**
+     (the best 1 s, from the 250 ms counter samples)
    - **aggregate** throughput (sum of all devices)
    - **each device's share**
    - **fairness**, using Jain's index `(Σx)² / (n·Σx²)`: 1.0 means a perfectly even split
@@ -384,10 +423,10 @@ enum ClientMsg {
     Hello { session: Uuid, role: Role, device: Option<DeviceInfo> }, // device on the control socket
     Status { phase: Option<Phase>, label: Option<String> },       // presence updates
     SetHidden { hidden: bool },
-    GroupCreate,
+    GroupCreate { direction_ms: Option<u32> },                    // length each way, 2–300 s
     GroupJoin { group: Uuid },
     GroupLeave,
-    GroupStart,                                                   // host only
+    GroupStart { direction_ms: Option<u32> },                     // host only; replaces the length
     Ping { seq: u32 },
     Download { id: u32, bytes: u64 },
     Upload { id: u32, bytes: u64 },
@@ -403,14 +442,18 @@ enum ServerMsg {
     RtcAnswer { sdp: String },
     Ice { candidate: String },
     Peers { peers: Vec<Peer>, hidden_active: u32 },  // full snapshot, ≤ 4 Hz
-    GroupInvite { group: Uuid, host: String },
-    GroupUpdate { group: Uuid, members: Vec<Peer>, state: GroupState },
+    GroupInvite { group: Uuid, host: String, direction_ms: Option<u32> },
+    GroupUpdate { group: Uuid, members: Vec<Peer>, state: GroupState, direction_ms: Option<u32> },
     GroupStart { group: Uuid, starts_in_ms: u32, plan: Profile },
     GroupResult { group: Uuid, result: GroupResult },
     Error { code: ErrorCode, message: String },
 }
 // Peer { id, device_name, device_kind, label, is_you, state: Idle | Testing { phase, down_bps, up_bps, latency_ms } }
 ```
+
+The `direction_ms` fields are optional and omitted when absent, so older clients and servers
+(`{"t":"group_create"}`, `{"t":"group_start"}`, an invite without a length) still interoperate:
+the server then uses `--group-test-seconds`.
 
 **Server limits**, advertised in `Welcome` and enforced:
 - `max_bytes_per_request` (default 2 GB)
@@ -456,6 +499,8 @@ RunResult {
     down_loaded_latency_ms?, down_loaded_jitter_ms?,
     up_loaded_latency_ms?,   up_loaded_jitter_ms?,
     packet_loss_ratio?,      // None = unavailable
+    download_peak_bps?, download_avg_bps?,   // timed runs only (§5.3)
+    upload_peak_bps?,   upload_avg_bps?,
   },
   scores: { streaming?, gaming?, rtc? : { points, class } },
   points: {
@@ -464,8 +509,10 @@ RunResult {
     upload:   [{ bytes, bps, duration_ms, server_ms }],
     down_loaded_latency: [ms], up_loaded_latency: [ms],
     packet_loss: { sent, received, lost }?,
+    download_series: [{ t_ms, bps }],  // throughput over time, ≤ 600 points per direction
+    upload_series:   [{ t_ms, bps }],
   },
-  phases: [{ kind, bytes?, count, status: done|skipped|failed }],
+  phases: [{ kind, bytes?, count, status: done|skipped|failed, duration_ms? }],
   duration_ms,
 }
 ```
@@ -616,11 +663,26 @@ help?" by comparing labels instead of reading individual runs.
 
 | Route | Content |
 |---|---|
-| `/` | Test page. The test does **not** auto-start, so users can check the label first. `?autostart=1` starts it on load. |
+| `/` | Test page. The test does **not** auto-start, so users can check the label first. `?autostart=1` starts it on load. `?timed_ms=N` (**tests only**) overrides the Timed length for this page load with N ms (1 s – 5 min, below the slider's 10 s minimum; not stored), and also applies to a group this device creates; the end-to-end tests use it to keep every speed test under 10 s. |
 | `/history` | §7.7 |
 | `/compare` | §7.7 |
 | `/runs/{id}` | A read-only result page with the same layout as the finished test page. Shareable. |
-| Settings drawer | Transport (WebSocket/HTTP), profile, parallel streams, units, theme, reduced motion, device name |
+| Settings drawer | Transport (WebSocket/HTTP), **test length**, profile, parallel streams, units, theme, reduced motion, device name |
+
+**Test length** (stored per device, `speedtest.test_length` / `speedtest.timed_ms`):
+**Automatic** (default) runs the size-based profile chosen below it (Quick / Standard /
+Extended). **Timed** replaces the profile choice with a **Duration** slider (10 s to 5 min,
+snapping to 10, 15, 20, 30, 45 s, 1, 2, 3, 4, 5 min; a native range input, so arrow keys,
+Page Up/Down, Home and End work, and the value is announced as text, e.g. "1 min") and a line
+such as "Download 30 s, then upload 30 s". It runs the `timed` profile (§5.3).
+
+During a timed step the hero caption counts down ("Download · 23 s left") behind a small
+countdown ring, and the phase timeline fills with the elapsed time. After a timed run the
+Download and Upload tiles read "Peak 941 · Avg 902 Mbps" instead of the latency under load
+(still in the latency box plots). The live throughput chart thins long runs to about one point
+per two pixels. The run page (`/runs/{id}`) shows the same tiles plus the stored throughput
+series (§6.3) as a chart, so dips, throttling and recovery stay visible later; the run facts
+read "Profile: Timed · 1 min each way".
 
 ### 7.9 Progressive Web App
 
@@ -669,6 +731,9 @@ help?" by comparing labels instead of reading individual runs.
   connected, the panel collapses to a single line: "Only this device is connected".
 - **While others are testing**, the packet-flow canvas also shows their traffic as faint
   particles in their device colors, so it is visible that the network is shared.
+- **Group length**: in the forming group the host has a **Length** slider (the same stops,
+  plus the server default when it isn't one); members see "1 min each way" in the lobby and
+  in the invite. The group result table shows each device's average with its **peak** under it.
 - **Before a solo test** while others are active, an inline prompt offers **Wait for them** or
   **Test anyway** (§5.11). Results that overlapped carry a "Shared network" badge.
 - **Test together**:

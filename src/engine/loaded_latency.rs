@@ -41,11 +41,23 @@ pub async fn probe_loop(
 }
 
 /// Emits [`EngineEvent::Live`] every [`LIVE_INTERVAL_MS`] from the link's
-/// cumulative byte counter. Never returns.
-pub async fn live_loop(link: &Link, direction: Direction, emit: &dyn Fn(EngineEvent)) {
+/// cumulative byte counter, and records each reading (time since `t0`) in
+/// `measurements` for the throughput series and the timed peak/average.
+/// Never returns.
+pub async fn live_loop(
+    link: &Link,
+    direction: Direction,
+    t0: f64,
+    measurements: &RefCell<Measurements>,
+    emit: &dyn Fn(EngineEvent),
+) {
     let mut meter = LiveMeter::new();
     loop {
-        if let Some(bps) = meter.push(now(), link.progress(direction)) {
+        let (t, bytes) = (now(), link.progress(direction));
+        measurements
+            .borrow_mut()
+            .push_progress(direction, t - t0, bytes);
+        if let Some(bps) = meter.push(t, bytes) {
             emit(EngineEvent::Live { direction, bps });
         }
         sleep(LIVE_INTERVAL_MS).await;

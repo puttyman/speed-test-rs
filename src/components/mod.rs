@@ -8,6 +8,7 @@ pub mod hero;
 pub mod icons;
 pub mod info_tip;
 pub mod label_picker;
+pub mod length_slider;
 pub mod metric_tile;
 pub mod motion;
 pub mod phase_timeline;

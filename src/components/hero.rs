@@ -18,6 +18,10 @@ pub fn Hero(
     /// One line under the number (current step, or the run summary).
     #[prop(into)]
     caption: Signal<String>,
+    /// Remaining fraction (`1.0..=0.0`) of a timed step: a countdown ring
+    /// before the caption.
+    #[prop(optional, into)]
+    ring: Signal<Option<f64>>,
     #[prop(into)] timeline: Signal<Vec<TimelineStep>>,
     #[prop(into)] flow_mode: Signal<FlowMode>,
     #[prop(into)] flow_bps: Signal<Option<f64>>,
@@ -65,7 +69,29 @@ pub fn Hero(
                         view! { <CountUp value=value format=format/> }
                     }}
                 </p>
-                <p class="hero-caption">{move || caption.get()}</p>
+                <p class="hero-caption">
+                    {move || {
+                        ring.get()
+                            .map(|f| {
+                                let offset = format!("{:.2}", 100.0 * (1.0 - f.clamp(0.0, 1.0)));
+                                view! {
+                                    <svg class="countdown-ring" viewBox="0 0 20 20" aria-hidden="true">
+                                        <circle class="ring-track" cx="10" cy="10" r="8"></circle>
+                                        <circle
+                                            class="ring-fill"
+                                            cx="10"
+                                            cy="10"
+                                            r="8"
+                                            pathLength="100"
+                                            stroke-dasharray="100"
+                                            stroke-dashoffset=offset
+                                        ></circle>
+                                    </svg>
+                                }
+                            })
+                    }}
+                    <span class="hero-caption-text">{move || caption.get()}</span>
+                </p>
                 <PhaseTimeline steps=timeline/>
                 {children()}
             </div>

@@ -593,9 +593,9 @@ async fn control_messages() {
     send(&mut ws, &ClientMsg::RtcOffer { sdp: "v=0".into() }).await;
     let msg = expect_error(&mut ws, ErrorCode::NotFound).await;
     assert_eq!(msg, "packet loss test unavailable");
-    send(&mut ws, &ClientMsg::GroupCreate).await;
+    send(&mut ws, &ClientMsg::GroupCreate { direction_ms: None }).await;
     assert!(matches!(recv(&mut ws).await, ServerMsg::GroupUpdate { .. }));
-    send(&mut ws, &ClientMsg::GroupStart).await;
+    send(&mut ws, &ClientMsg::GroupStart { direction_ms: None }).await;
     expect_error(&mut ws, ErrorCode::Conflict).await;
     send(&mut ws, &ClientMsg::Ping { seq: 1 }).await;
     expect_error(&mut ws, ErrorCode::BadRequest).await;

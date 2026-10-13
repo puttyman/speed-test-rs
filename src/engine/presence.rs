@@ -8,7 +8,7 @@
 //!     PresenceOptions::new(engine::detect_device()),
 //!     move |ev| match ev {
 //!         PresenceEvent::Peers(peers, hidden_active) => { /* Devices panel */ }
-//!         PresenceEvent::GroupInvite { group, host } => { /* "host wants to test together" */ }
+//!         PresenceEvent::GroupInvite { group, host, .. } => { /* "host wants to test together" */ }
 //!         PresenceEvent::GroupStart { starts_in_ms, plan, .. } => {
 //!             // engine::start_at(presence.engine_options(Transport::Websocket, plan), starts_in_ms, ...)
 //!         }
@@ -96,14 +96,19 @@ pub enum PresenceEvent {
     /// Full snapshot of the other devices (and this one, `is_you`), and the
     /// number of hidden devices currently testing. At most 4 per second.
     Peers(Vec<Peer>, u32),
-    /// Another device wants to test together.
-    GroupInvite { group: Uuid, host: String },
+    /// Another device wants to test together, `direction_ms` each way.
+    GroupInvite {
+        group: Uuid,
+        host: String,
+        direction_ms: Option<u32>,
+    },
     /// Membership or state of the group this device is in.
     GroupUpdate {
         group: Uuid,
         host: Uuid,
         members: Vec<Peer>,
         state: GroupState,
+        direction_ms: Option<u32>,
     },
     /// Start `plan` in `starts_in_ms` (use [`super::start_at`]).
     GroupStart {
@@ -183,8 +188,9 @@ impl PresenceHandle {
     }
 
     /// "Test together": creates a group with this device as host.
-    pub fn create_group(&self) -> bool {
-        self.0.send(&ClientMsg::GroupCreate)
+    /// Creates a group of `direction_ms` each way (`None` = the server default).
+    pub fn create_group(&self, direction_ms: Option<u32>) -> bool {
+        self.0.send(&ClientMsg::GroupCreate { direction_ms })
     }
 
     pub fn join_group(&self, group: Uuid) -> bool {
@@ -196,8 +202,9 @@ impl PresenceHandle {
     }
 
     /// Host only: starts the group test (the server answers with `GroupStart`).
-    pub fn start_group(&self) -> bool {
-        self.0.send(&ClientMsg::GroupStart)
+    /// `direction_ms` replaces the group's length when given.
+    pub fn start_group(&self, direction_ms: Option<u32>) -> bool {
+        self.0.send(&ClientMsg::GroupStart { direction_ms })
     }
 
     /// Engine options for a run of this device: same origin, auth, device and
@@ -243,17 +250,27 @@ fn event_of(msg: ServerMsg) -> Option<PresenceEvent> {
             peers,
             hidden_active,
         } => PresenceEvent::Peers(peers, hidden_active),
-        ServerMsg::GroupInvite { group, host } => PresenceEvent::GroupInvite { group, host },
+        ServerMsg::GroupInvite {
+            group,
+            host,
+            direction_ms,
+        } => PresenceEvent::GroupInvite {
+            group,
+            host,
+            direction_ms,
+        },
         ServerMsg::GroupUpdate {
             group,
             host,
             members,
             state,
+            direction_ms,
         } => PresenceEvent::GroupUpdate {
             group,
             host,
             members,
             state,
+            direction_ms,
         },
         ServerMsg::GroupStart {
             group,

@@ -63,6 +63,27 @@ pub fn segments(points: &[LivePoint]) -> Vec<(Direction, Vec<LivePoint>)> {
     out
 }
 
+/// Thins a segment to at most `max` points by averaging consecutive runs of
+/// points (long timed tests produce thousands of readings; the path only needs
+/// about one point per two pixels).
+pub fn thin(seg: &[LivePoint], max: usize) -> Vec<LivePoint> {
+    let max = max.max(2);
+    if seg.len() <= max {
+        return seg.to_vec();
+    }
+    let chunk = seg.len().div_ceil(max);
+    seg.chunks(chunk)
+        .map(|c| {
+            let n = c.len() as f64;
+            LivePoint {
+                t_ms: c.iter().map(|p| p.t_ms).sum::<f64>() / n,
+                bps: c.iter().map(|p| p.bps).sum::<f64>() / n,
+                direction: c[0].direction,
+            }
+        })
+        .collect()
+}
+
 /// Index of the point closest in time to `t_ms` (points sorted by time).
 pub fn nearest(points: &[LivePoint], t_ms: f64) -> Option<usize> {
     if points.is_empty() {
@@ -116,9 +137,13 @@ pub fn LiveArea(
     let paths = Memo::new(move |_| {
         let g = geo.get();
         points.with(|pts| {
+            // Points per segment, in proportion to its share of the time axis.
+            let per_ms = ((g.w - M_LEFT - M_RIGHT) / 2.0) / g.t_end.max(1.0);
             segments(pts)
                 .into_iter()
                 .map(|(d, seg)| {
+                    let span = seg.last().map_or(0.0, |l| l.t_ms) - seg[0].t_ms;
+                    let seg = thin(&seg, (span * per_ms).ceil() as usize + 2);
                     let xy: Vec<(f64, f64)> = seg
                         .iter()
                         .map(|p| (g.x.map(p.t_ms), g.y.map(p.bps)))
@@ -161,7 +186,8 @@ pub fn LiveArea(
     let table_rows = Signal::derive(move || {
         let unit = ui.units.get();
         points.with(|pts| {
-            // About one row per second.
+            // About one row per second (fewer for long runs: at most ~120).
+            let every = pts.last().map_or(1000.0, |l| (l.t_ms / 120.0).max(1000.0));
             let mut rows = Vec::new();
             let mut next = 0.0;
             for p in pts {
@@ -172,7 +198,7 @@ pub fn LiveArea(
                         series_of(p.direction).label().to_string(),
                         format!("{v} {u}"),
                     ]);
-                    next = p.t_ms + 1000.0;
+                    next = p.t_ms + every;
                 }
             }
             rows
@@ -360,6 +386,21 @@ mod tests {
             vec![(Download, 2), (Upload, 2), (Upload, 1), (Download, 1)]
         );
         assert!(segments(&[]).is_empty());
+    }
+
+    #[test]
+    fn thins_long_segments() {
+        let pts: Vec<_> = (0..3000)
+            .map(|i| LivePoint {
+                t_ms: f64::from(i) * 100.0,
+                bps: if i % 2 == 0 { 1e6 } else { 3e6 },
+                direction: Direction::Upload,
+            })
+            .collect();
+        let t = thin(&pts, 300);
+        assert_eq!(t.len(), 300);
+        assert!(t.iter().all(|p| (p.bps - 2e6).abs() < 1.0));
+        assert_eq!(thin(&pts[..10], 300).len(), 10);
     }
 
     #[test]

@@ -192,6 +192,7 @@ impl Client {
                 host,
                 members,
                 state: s,
+                ..
             } if *s == state => Some((*group, *host, members.clone())),
             _ => None,
         })
@@ -493,12 +494,12 @@ async fn presence_disabled() {
         "no presence frames"
     );
     for msg in [
-        ClientMsg::GroupCreate,
+        ClientMsg::GroupCreate { direction_ms: None },
         ClientMsg::GroupJoin {
             group: Uuid::new_v4(),
         },
         ClientMsg::GroupLeave,
-        ClientMsg::GroupStart,
+        ClientMsg::GroupStart { direction_ms: None },
     ] {
         a.send(&msg).await;
         let (code, message) = a.error().await;
@@ -521,21 +522,25 @@ async fn host_leaving_cancels_and_errors() {
         })
         .await;
     assert_eq!(guest.error().await.0, ErrorCode::NotFound);
-    guest.send(&ClientMsg::GroupStart).await;
+    guest
+        .send(&ClientMsg::GroupStart { direction_ms: None })
+        .await;
     assert_eq!(guest.error().await.0, ErrorCode::NotFound);
 
-    host.send(&ClientMsg::GroupCreate).await;
+    host.send(&ClientMsg::GroupCreate { direction_ms: None })
+        .await;
     let (group, h, members) = host.update(GroupState::Forming).await;
     assert_eq!(h, host.session);
     assert_eq!(names(&members), ["Host"]);
     assert!(members[0].is_you);
     // Alone: can't start.
-    host.send(&ClientMsg::GroupStart).await;
+    host.send(&ClientMsg::GroupStart { direction_ms: None })
+        .await;
     assert_eq!(host.error().await.0, ErrorCode::Conflict);
 
     let invited = guest
         .wait_for(Duration::from_secs(1), |m| match m {
-            ServerMsg::GroupInvite { group, host } => Some((*group, host.clone())),
+            ServerMsg::GroupInvite { group, host, .. } => Some((*group, host.clone())),
             _ => None,
         })
         .await;
@@ -552,7 +557,9 @@ async fn host_leaving_cancels_and_errors() {
     assert!(members.iter().any(|p| p.is_you && p.id == guest.session));
 
     // Only the host may start.
-    guest.send(&ClientMsg::GroupStart).await;
+    guest
+        .send(&ClientMsg::GroupStart { direction_ms: None })
+        .await;
     let (code, _) = guest.error().await;
     assert_eq!(code, ErrorCode::Conflict);
 
@@ -567,13 +574,132 @@ async fn host_leaving_cancels_and_errors() {
 }
 
 #[tokio::test]
+async fn host_picks_the_group_length() {
+    let server = Server::start(true, false).await;
+    let mut host = server.client("Host").await;
+    let mut guest = server.client("Guest").await;
+
+    // A custom length at creation: the invite and every update carry it.
+    host.send(&ClientMsg::GroupCreate {
+        direction_ms: Some(3000),
+    })
+    .await;
+    let length = |m: &ServerMsg| match m {
+        ServerMsg::GroupUpdate { direction_ms, .. } => *direction_ms,
+        _ => None,
+    };
+    let first = host
+        .wait_for(Duration::from_secs(2), |m| {
+            matches!(m, ServerMsg::GroupUpdate { .. }).then(|| m.clone())
+        })
+        .await;
+    assert_eq!(length(&first), Some(3000));
+    let (group, invite_ms) = guest
+        .wait_for(Duration::from_secs(1), |m| match m {
+            ServerMsg::GroupInvite {
+                group,
+                direction_ms,
+                ..
+            } => Some((*group, *direction_ms)),
+            _ => None,
+        })
+        .await;
+    assert_eq!(invite_ms, Some(3000));
+    guest.send(&ClientMsg::GroupJoin { group }).await;
+    let joined = guest
+        .wait_for(Duration::from_secs(2), |m| match m {
+            ServerMsg::GroupUpdate {
+                members,
+                direction_ms,
+                ..
+            } if members.len() == 2 => Some(*direction_ms),
+            _ => None,
+        })
+        .await;
+    assert_eq!(joined, Some(3000));
+
+    // The plan uses it (no override at start).
+    host.send(&ClientMsg::GroupStart { direction_ms: None })
+        .await;
+    for cl in [&mut host, &mut guest] {
+        let plan = cl
+            .wait_for(Duration::from_secs(1), |m| match m {
+                ServerMsg::GroupStart { group: g, plan, .. } if *g == group => Some(plan.clone()),
+                _ => None,
+            })
+            .await;
+        assert_eq!(plan, Profile::concurrent_for(3000));
+    }
+    host.send(&ClientMsg::GroupLeave).await;
+    guest.send(&ClientMsg::GroupLeave).await;
+
+    // Too long a length is clamped to 5 min; `GroupStart` can replace it.
+    host.send(&ClientMsg::GroupCreate {
+        direction_ms: Some(3_600_000),
+    })
+    .await;
+    let (group, clamped) = host
+        .wait_for(Duration::from_secs(2), |m| match m {
+            ServerMsg::GroupUpdate {
+                group,
+                state: GroupState::Forming,
+                members,
+                direction_ms,
+                ..
+            } if members.len() == 1 => Some((*group, *direction_ms)),
+            _ => None,
+        })
+        .await;
+    assert_eq!(clamped, Some(300_000));
+    let invite_ms = guest
+        .wait_for(Duration::from_secs(1), |m| match m {
+            ServerMsg::GroupInvite {
+                group: g,
+                direction_ms,
+                ..
+            } if *g == group => Some(*direction_ms),
+            _ => None,
+        })
+        .await;
+    assert_eq!(invite_ms, Some(300_000));
+    guest.send(&ClientMsg::GroupJoin { group }).await;
+    host.wait_for(Duration::from_secs(2), |m| match m {
+        ServerMsg::GroupUpdate { members, .. } if members.len() == 2 => Some(()),
+        _ => None,
+    })
+    .await;
+    host.send(&ClientMsg::GroupStart {
+        direction_ms: Some(2500),
+    })
+    .await;
+    let plan = guest
+        .wait_for(Duration::from_secs(1), |m| match m {
+            ServerMsg::GroupStart { group: g, plan, .. } if *g == group => Some(plan.clone()),
+            _ => None,
+        })
+        .await;
+    assert_eq!(plan, Profile::concurrent_for(2500));
+    let starting = guest
+        .wait_for(Duration::from_secs(1), |m| match m {
+            ServerMsg::GroupUpdate {
+                state: GroupState::Starting,
+                direction_ms,
+                ..
+            } => Some(*direction_ms),
+            _ => None,
+        })
+        .await;
+    assert_eq!(starting, Some(2500));
+}
+
+#[tokio::test]
 async fn group_test_measures_concurrent_transfers() {
     let server = Server::start(true, true).await;
     let mut a = server.client("Alpha").await;
     let mut b = server.client("Bravo").await;
     let mut c = server.client("Charlie").await;
 
-    a.send(&ClientMsg::GroupCreate).await;
+    a.send(&ClientMsg::GroupCreate { direction_ms: None }).await;
     let (group, _, _) = a.update(GroupState::Forming).await;
     for cl in [&mut b, &mut c] {
         cl.wait_for(Duration::from_secs(1), |m| {
@@ -587,7 +713,7 @@ async fn group_test_measures_concurrent_transfers() {
         _ => None,
     })
     .await;
-    a.send(&ClientMsg::GroupStart).await;
+    a.send(&ClientMsg::GroupStart { direction_ms: None }).await;
     let mut starts = Vec::new();
     for cl in [&mut a, &mut b, &mut c] {
         let (at, start) = cl
@@ -673,6 +799,16 @@ async fn group_test_measures_concurrent_transfers() {
     near(mb.download_bps, 80e6);
     near(ma.upload_bps, 20e6);
     near(mb.upload_bps, 40e6);
+    // Peak: the best second, at least the average (steady pacing: about the same).
+    for (peak, avg) in [
+        (ma.download_peak_bps, ma.download_bps),
+        (mb.download_peak_bps, mb.download_bps),
+        (ma.upload_peak_bps, ma.upload_bps),
+        (mb.upload_peak_bps, mb.upload_bps),
+    ] {
+        let (peak, avg) = (peak.unwrap(), avg.unwrap());
+        assert!(peak >= avg * 0.98 && peak <= avg * 1.4, "{peak} vs {avg}");
+    }
     let agg = result.aggregate_download_bps.unwrap();
     assert!((agg - ma.download_bps.unwrap() - mb.download_bps.unwrap()).abs() < 1.0);
     let shares = ma.download_share.unwrap() + mb.download_share.unwrap();

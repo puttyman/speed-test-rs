@@ -179,7 +179,7 @@ impl Step {
 /// A named, ordered sequence of steps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
-    /// `quick`, `standard`, `extended`, `concurrent` or a custom name.
+    /// `quick`, `standard`, `extended`, `timed`, `concurrent` or a custom name.
     pub name: String,
     pub steps: Vec<Step>,
 }
@@ -196,7 +196,13 @@ const GB2: u64 = 2_000_000_000;
 
 impl Profile {
     /// Names of the built-in profiles.
-    pub const BUILTIN: [&'static str; 4] = ["quick", "standard", "extended", "concurrent"];
+    pub const BUILTIN: [&'static str; 5] = ["quick", "standard", "extended", "timed", "concurrent"];
+
+    /// Shortest and longest download (and upload) time of a user-chosen timed test.
+    pub const TIMED_MIN_MS: u32 = 10_000;
+    pub const TIMED_MAX_MS: u32 = 300_000;
+    /// Download (and upload) time of `by_name("timed")`.
+    pub const TIMED_DEFAULT_MS: u32 = 30_000;
 
     /// The default profile (SPEC §5.3, 20 steps incl. the LAN extension), in four blocks:
     /// idle latency, every download size (smallest first), every upload size, then packet
@@ -294,6 +300,41 @@ impl Profile {
         ]
     }
 
+    /// A fixed-duration test (the "Timed" test length, SPEC §5.3): idle latency as in
+    /// `standard`, then `direction_ms` of continuous download, the same of continuous
+    /// upload, then packet loss. `direction_ms` is clamped to
+    /// [`TIMED_MIN_MS`](Self::TIMED_MIN_MS)`..=`[`TIMED_MAX_MS`](Self::TIMED_MAX_MS); use
+    /// [`timed_unclamped`](Self::timed_unclamped) for shorter test-only runs.
+    pub fn timed(direction_ms: u32) -> Self {
+        Self::timed_unclamped(direction_ms.clamp(Self::TIMED_MIN_MS, Self::TIMED_MAX_MS))
+    }
+
+    /// [`timed`](Self::timed) without the clamp (at least 1 s per direction). Only for
+    /// the test-only `?timed_ms=` override (SPEC §7.8).
+    pub fn timed_unclamped(direction_ms: u32) -> Self {
+        let direction_ms = direction_ms.clamp(1000, Self::TIMED_MAX_MS);
+        let mut steps = Self::latency_steps();
+        steps.push(Step::TimedDownload {
+            duration_ms: direction_ms,
+        });
+        steps.push(Step::TimedUpload {
+            duration_ms: direction_ms,
+        });
+        steps.push(Step::default_packet_loss());
+        Profile {
+            name: "timed".into(),
+            steps,
+        }
+    }
+
+    /// Download time of a timed profile (its first timed download), if it has one.
+    pub fn timed_direction_ms(&self) -> Option<u32> {
+        self.steps.iter().find_map(|s| match s {
+            Step::TimedDownload { duration_ms } => Some(*duration_ms),
+            _ => None,
+        })
+    }
+
     /// The time-based group profile (SPEC §5.11): 3 s idle latency, 10 s
     /// download, 2 s pause, 10 s upload. Packet loss is optional; append
     /// [`Step::default_packet_loss`] to include it.
@@ -330,6 +371,7 @@ impl Profile {
             "quick" => Some(Self::quick()),
             "standard" => Some(Self::standard()),
             "extended" => Some(Self::extended()),
+            "timed" => Some(Self::timed(Self::TIMED_DEFAULT_MS)),
             "concurrent" => Some(Self::concurrent()),
             _ => None,
         }
@@ -395,6 +437,12 @@ pub enum PhaseStatus {
     Failed,
 }
 
+/// Steps the time cap never cuts: packet loss (bounded by its timeouts) and
+/// steps with a fixed duration.
+fn cap_exempt(step: &Step) -> bool {
+    matches!(step, Step::PacketLoss { .. }) || step.duration_ms().is_some()
+}
+
 /// Deterministic planner that walks a profile (SPEC §5.3).
 ///
 /// Usage: call [`next_step`](Self::next_step) with the elapsed measurement
@@ -414,7 +462,9 @@ pub enum PhaseStatus {
 /// rest of that direction is skipped (see [`time_up_for`](Self::time_up_for)).
 ///
 /// **Time cap**: when `elapsed_ms >= max_test_ms`, every remaining step is
-/// skipped, except packet loss, which is short and bounded by its own timeouts.
+/// skipped, except packet loss, which is short and bounded by its own timeouts,
+/// and timed steps (`TimedLatency`, `TimedDownload`, `TimedUpload`, `Pause`),
+/// which are bounded by their own duration: a 5 min timed test runs in full.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RampState {
     steps: Vec<Step>,
@@ -456,9 +506,11 @@ impl RampState {
     }
 
     /// Whether `step` must stop now: the overall time cap, or (for a size-based
-    /// transfer) its direction's budget.
+    /// transfer) its direction's budget. Always false for timed steps and packet
+    /// loss, which are exempt from the cap.
     pub fn time_up_for(&self, step: &Step, elapsed_ms: f64) -> bool {
-        self.time_up(elapsed_ms) || self.direction_budget_used(step, elapsed_ms)
+        !cap_exempt(step)
+            && (self.time_up(elapsed_ms) || self.direction_budget_used(step, elapsed_ms))
     }
 
     fn direction_budget_used(&self, step: &Step, elapsed_ms: f64) -> bool {
@@ -497,7 +549,7 @@ impl RampState {
                 continue;
             }
             let step = &self.steps[i];
-            let exempt = matches!(step, Step::PacketLoss { .. });
+            let exempt = cap_exempt(step);
             if (time_up && !exempt)
                 || self.should_skip(step)
                 || self.direction_budget_used(step, elapsed_ms)
@@ -696,6 +748,78 @@ mod tests {
         let d: Vec<_> = c.steps.iter().map(Step::duration_ms).collect();
         assert_eq!(d, vec![Some(1000), Some(3000), Some(500), Some(3000)]);
         assert_eq!(Profile::concurrent_for(10_000), Profile::concurrent());
+    }
+
+    #[test]
+    fn timed_profile_and_clamping() {
+        let t = Profile::timed(30_000);
+        assert_eq!(t.name, "timed");
+        let shape: Vec<_> = t
+            .steps
+            .iter()
+            .map(|s| (s.phase(), s.duration_ms()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (Phase::Latency, None),
+                (Phase::Latency, None),
+                (Phase::Download, Some(30_000)),
+                (Phase::Upload, Some(30_000)),
+                (Phase::PacketLoss, None),
+            ]
+        );
+        assert_eq!(t.steps[0], Step::Latency { num_packets: 1 });
+        assert_eq!(t.steps[1], Step::Latency { num_packets: 20 });
+        assert_eq!(t.timed_direction_ms(), Some(30_000));
+        assert_eq!(Profile::timed(1).timed_direction_ms(), Some(10_000));
+        assert_eq!(Profile::timed(u32::MAX).timed_direction_ms(), Some(300_000));
+        assert_eq!(
+            Profile::timed_unclamped(3000).timed_direction_ms(),
+            Some(3000)
+        );
+        assert_eq!(
+            Profile::timed_unclamped(10).timed_direction_ms(),
+            Some(1000)
+        );
+        assert_eq!(
+            Profile::timed_unclamped(900_000).timed_direction_ms(),
+            Some(300_000)
+        );
+        assert_eq!(Profile::by_name("timed"), Some(Profile::timed(30_000)));
+        assert_eq!(Profile::standard().timed_direction_ms(), None);
+    }
+
+    #[test]
+    fn time_cap_never_cuts_timed_steps() {
+        // A 5 min timed test: far beyond the 60 s cap.
+        let p = Profile::timed(300_000);
+        let cfg = Config::default();
+        let mut r = RampState::new(&p, &cfg);
+        let mut t = 0.0;
+        let mut ran = Vec::new();
+        while let Some((i, step)) = r.next_step(t) {
+            let step = step.clone();
+            // Mid-step checks never stop a timed step.
+            if step.duration_ms().is_some() {
+                assert!(!r.time_up_for(&step, t + 250_000.0));
+            }
+            t += f64::from(step.duration_ms().unwrap_or(100));
+            ran.push(i);
+            r.complete_step(i, PhaseStatus::Done);
+        }
+        assert_eq!(ran, vec![0, 1, 2, 3, 4]);
+        assert!(t > 600_000.0);
+        // A long group plan too.
+        let mut r = RampState::new(&Profile::concurrent_for(300_000), &cfg);
+        let mut n = 0;
+        while let Some((i, _)) = r.next_step(f64::from(n) * 200_000.0) {
+            r.complete_step(i, PhaseStatus::Done);
+            n += 1;
+        }
+        assert_eq!(n, 4);
+        // Sized steps still stop at the cap.
+        assert!(r.time_up_for(&Step::download(1, 1), 60_000.0));
     }
 
     #[test]

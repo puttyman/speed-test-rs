@@ -360,3 +360,16 @@
 	border-radius: inherit;
 	background: var(--series);
 }
+
+.share-peak {
+	grid-column: 1 / -1;
+	order: 1;
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	font-variant-numeric: tabular-nums;
+}
+
+.th-sub {
+	color: var(--color-text-muted);
+	font-weight: 400;
+}

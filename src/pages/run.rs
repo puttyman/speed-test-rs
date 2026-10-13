@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::components::icons;
 use crate::components::quality_card::QualityCard;
 use crate::components::result_view::{
-    ResultDetails, ResultTiles, RunInfoCard, SharedBadge, format_when, shared_text,
+    ResultDetails, ResultTiles, RunInfoCard, SharedBadge, ThroughputCard, format_when, shared_text,
 };
 use crate::model::result::RunResult;
 use crate::model::units::{format_ms, format_rate};
@@ -131,6 +131,7 @@ pub fn RunPage() -> impl IntoView {
                             </div>
                         </section>
                         <ResultTiles result=result/>
+                        <ThroughputCard result=result/>
                         <div class="card-row">
                             <QualityCard scores=Signal::derive(move || result.with(|r| r.as_ref().map(|r| r.scores)))/>
                             <RunInfoCard result=r.clone()/>
