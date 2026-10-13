@@ -170,9 +170,10 @@ download and upload, which made the hero and timeline jump back and forth.
 | 19 | Upload *(fast links)* | 2 GB × 2 |
 | 20 | Packet loss | 1000 packets, batch 10, 10 ms between batches, 3000 ms wait |
 
-**Ramp halting** (as in Cloudflare): within one direction, once any request in a size set takes
+**Ramp halting**: within one direction, once the **median** request of a completed size set takes
 ≥ `bandwidth_finish_request_ms` (default **1000 ms**), larger sizes in that direction are
-skipped. A slow Wi-Fi client stops early. A fast wired client continues to the *fast links*
+skipped. The median (rather than any single request) means one slow request, such as TCP slow
+start or a Wi-Fi hiccup, can't end the ramp early, and the single warm-up request never halts it. A slow Wi-Fi client stops early. A fast wired client continues to the *fast links*
 steps: 1 GB runs when 250 MB finished in under a second (above about 2 Gbps), and 2 GB when
 1 GB did (above about 8 Gbps), so even multi-gig links get transfers long enough to show
 sustained speed. The UI labels them "Fast link". The 2 GB steps stay within the server's

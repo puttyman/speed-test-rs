@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::protocol::Phase;
+use super::stats;
 
 /// Maximum number of parallel data streams (SPEC §5.5).
 pub const MAX_STREAMS: u8 = 8;
@@ -452,10 +453,11 @@ fn cap_exempt(step: &Step) -> bool {
 /// [`complete_step`](Self::complete_step). Steps the planner passes over are
 /// marked [`PhaseStatus::Skipped`].
 ///
-/// **Ramp halting**: once any request in a direction takes at least
+/// **Ramp halting**: once a completed step's **median** request takes at least
 /// `bandwidth_finish_request_ms`, later steps in that direction with a larger
-/// request size are skipped. The current step still runs to completion
-/// (unless the time cap hits).
+/// request size are skipped. Using the median of the whole size set means one
+/// slow request (TCP slow start, a Wi-Fi hiccup) can't end the ramp early; the
+/// single warm-up request (`bypass_min_duration`) never halts it.
 ///
 /// **Direction budget**: each direction's size-based transfers get
 /// `max_direction_ms`, counted from its first transfer step. Once used up, the
@@ -477,6 +479,8 @@ pub struct RampState {
     max_direction_ms: f64,
     download_started: Option<f64>,
     upload_started: Option<f64>,
+    /// Request durations of the step in progress (for the median halting rule).
+    step_durations: Vec<f64>,
 }
 
 impl RampState {
@@ -492,6 +496,7 @@ impl RampState {
             max_direction_ms: config.max_direction_ms as f64,
             download_started: None,
             upload_started: None,
+            step_durations: Vec::new(),
         }
     }
 
@@ -571,23 +576,36 @@ impl RampState {
         None
     }
 
-    /// Records one finished transfer of `bytes` that took `duration_ms`
-    /// (client first-to-last byte for downloads, server time for uploads).
-    pub fn record_request(&mut self, direction: Direction, bytes: u64, duration_ms: f64) {
-        if duration_ms.is_nan() || duration_ms < self.finish_request_ms {
-            return;
+    /// Records one finished transfer that took `duration_ms` (client first-to-last
+    /// byte for downloads, server time for uploads). Halting is decided when the step
+    /// completes, from the median of its requests.
+    pub fn record_request(&mut self, _direction: Direction, _bytes: u64, duration_ms: f64) {
+        if duration_ms.is_finite() {
+            self.step_durations.push(duration_ms);
         }
-        let slot = match direction {
-            Direction::Download => &mut self.halt_download,
-            Direction::Upload => &mut self.halt_upload,
-        };
-        *slot = Some(slot.map_or(bytes, |h| h.min(bytes)));
     }
 
-    /// Sets the final status of step `index`.
+    /// Sets the final status of step `index` and applies the halting rule to it.
     pub fn complete_step(&mut self, index: usize, status: PhaseStatus) {
+        let durations = std::mem::take(&mut self.step_durations);
         if let Some(s) = self.status.get_mut(index) {
             *s = Some(status);
+        }
+        let Some(step) = self.steps.get(index) else {
+            return;
+        };
+        let (Some(direction), Some(bytes)) = (step.direction(), step.bytes()) else {
+            return;
+        };
+        if step.bypass_min_duration() || durations.is_empty() {
+            return;
+        }
+        if stats::median(&durations).is_some_and(|m| m >= self.finish_request_ms) {
+            let slot = match direction {
+                Direction::Download => &mut self.halt_download,
+                Direction::Upload => &mut self.halt_upload,
+            };
+            *slot = Some(slot.map_or(bytes, |h| h.min(bytes)));
         }
     }
 
@@ -894,7 +912,7 @@ mod tests {
     fn simulate(
         profile: &Profile,
         config: &Config,
-        duration: impl Fn(Direction, u64) -> f64,
+        mut duration: impl FnMut(Direction, u64) -> f64,
     ) -> (RampState, Vec<usize>, f64) {
         let mut ramp = RampState::new(profile, config);
         let mut ran = Vec::new();
@@ -971,17 +989,58 @@ mod tests {
     }
 
     #[test]
-    fn halting_threshold_is_inclusive() {
-        let mut r = RampState::new(&Profile::standard(), &Config::default());
-        r.record_request(Direction::Upload, 1_000_000, 999.9);
-        assert_eq!(r.halted_at(Direction::Upload), None);
-        r.record_request(Direction::Upload, 1_000_000, 1000.0);
-        assert_eq!(r.halted_at(Direction::Upload), Some(1_000_000));
-        // A later, larger request doesn't move the halt size up.
-        r.record_request(Direction::Upload, 10_000_000, 5000.0);
-        assert_eq!(r.halted_at(Direction::Upload), Some(1_000_000));
-        r.record_request(Direction::Upload, 1, f64::NAN);
-        assert_eq!(r.halted_at(Direction::Upload), Some(1_000_000));
+    fn halting_uses_the_median_of_a_step() {
+        let p = Profile::standard();
+        // Index 4: Download 1 MB x 8.
+        assert_eq!(p.steps[4].bytes(), Some(1_000_000));
+        let run = |durations: &[f64]| {
+            let mut r = RampState::new(&p, &Config::default());
+            for &d in durations {
+                r.record_request(Direction::Download, 1_000_000, d);
+            }
+            r.complete_step(4, PhaseStatus::Done);
+            r.halted_at(Direction::Download)
+        };
+        // One slow request (slow start, a Wi-Fi hiccup) doesn't stop the ramp.
+        assert_eq!(run(&[2500.0, 120.0, 110.0, 130.0, 100.0]), None);
+        // A median just under the threshold doesn't either; at the threshold it does.
+        assert_eq!(run(&[999.9, 999.9, 999.9]), None);
+        assert_eq!(run(&[1000.0, 1000.0, 900.0]), Some(1_000_000));
+        // NaN and infinite durations are ignored.
+        assert_eq!(run(&[f64::NAN, f64::INFINITY, 100.0]), None);
+    }
+
+    #[test]
+    fn warm_up_request_never_halts() {
+        let p = Profile::standard();
+        // Index 2: the single 100 kB warm-up download (bypass_min_duration).
+        assert!(p.steps[2].bypass_min_duration());
+        let mut r = RampState::new(&p, &Config::default());
+        r.record_request(Direction::Download, 100_000, 5000.0);
+        r.complete_step(2, PhaseStatus::Done);
+        assert_eq!(r.halted_at(Direction::Download), None);
+    }
+
+    #[test]
+    fn slow_first_requests_still_reach_larger_sizes() {
+        // 30 Mbps link where the first request of each size stalls for 1.5 s.
+        let p = Profile::standard();
+        let mut seen = std::collections::HashSet::new();
+        let (_, ran, _) = simulate(&p, &Config::default(), |dir, b| {
+            let normal = b as f64 * 8.0 / 3e7 * 1e3;
+            if seen.insert((dir, b)) {
+                1500.0
+            } else {
+                normal
+            }
+        });
+        let largest_download = ran
+            .iter()
+            .filter(|&&i| p.steps[i].direction() == Some(Direction::Download))
+            .filter_map(|&i| p.steps[i].bytes())
+            .max();
+        // 1 MB (0.27 s) and 10 MB (2.7 s) run; 10 MB halts the ramp.
+        assert_eq!(largest_download, Some(10_000_000));
     }
 
     #[test]
