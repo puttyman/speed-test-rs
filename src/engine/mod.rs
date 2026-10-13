@@ -62,7 +62,7 @@ mod api {
 
     use super::js::{AbortFlag, Result, js_err, random_bytes};
     use super::socket::Socket;
-    use super::util::{CHUNK_BYTES, UPLOAD_BUFFER_BYTES};
+    use super::util::{CHUNK_BYTES, HTTP_UPLOAD_CHUNK_BYTES, UPLOAD_BUFFER_BYTES};
     use crate::model::device::device_kind_and_name_from_user_agent;
     use crate::model::profile::{Config, Direction, PhaseStatus, Profile, Step};
     use crate::model::protocol::DeviceInfo;
@@ -271,6 +271,8 @@ mod api {
     struct UploadInner {
         buf: Uint8Array,
         chunks: Vec<Uint8Array>,
+        /// One reusable HTTP upload body (built on first use; see [`UploadBuffer::blob`]).
+        http_blob: std::cell::OnceCell<web_sys::Blob>,
     }
 
     impl UploadBuffer {
@@ -282,7 +284,11 @@ mod api {
                     buf.subarray(a, a + CHUNK_BYTES as u32)
                 })
                 .collect();
-            Ok(Self(Rc::new(UploadInner { buf, chunks })))
+            Ok(Self(Rc::new(UploadInner {
+                buf,
+                chunks,
+                http_blob: std::cell::OnceCell::new(),
+            })))
         }
 
         pub fn len(&self) -> usize {
@@ -303,8 +309,32 @@ mod api {
             self.0.buf.subarray(offset as u32, (offset + len) as u32)
         }
 
-        /// A `Blob` of `bytes` bytes made of buffer views (no copy through WASM).
+        /// A `Blob` of `bytes` (at most [`HTTP_UPLOAD_CHUNK_BYTES`]) for an HTTP upload body.
+        ///
+        /// One chunk-sized Blob is built once and every request sends it (or a `slice` of
+        /// it, which shares the same storage). Blobs are immutable and reusable, so memory
+        /// stays at one chunk; a new Blob per request piles up until the browser collects
+        /// them and can fail with `ERR_BLOB_OUT_OF_MEMORY`.
         pub fn blob(&self, bytes: u64) -> Result<web_sys::Blob> {
+            let full = match self.0.http_blob.get() {
+                Some(b) => b.clone(),
+                None => {
+                    let b = self.build_blob(HTTP_UPLOAD_CHUNK_BYTES)?;
+                    let _ = self.0.http_blob.set(b.clone());
+                    b
+                }
+            };
+            let bytes = bytes.min(HTTP_UPLOAD_CHUNK_BYTES);
+            if bytes == HTTP_UPLOAD_CHUNK_BYTES {
+                Ok(full)
+            } else {
+                full.slice_with_f64_and_f64(0.0, bytes as f64)
+                    .map_err(js_err)
+            }
+        }
+
+        /// A new `Blob` of `bytes` bytes made of buffer views (no copy through WASM).
+        fn build_blob(&self, bytes: u64) -> Result<web_sys::Blob> {
             let parts = Array::new();
             let full = UPLOAD_BUFFER_BYTES as u64;
             let mut left = bytes;
