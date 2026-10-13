@@ -189,12 +189,12 @@ mod tests {
     fn passed_phase_is_complete_even_with_unreported_steps() {
         let steps = Profile::standard().steps;
         // Latency done, two downloads done; the larger downloads were skipped by ramp
-        // halting and never reported. Upload (index 10) is running.
+        // halting and never reported. Upload (index 11) is running.
         let mut statuses = vec![None; steps.len()];
         for s in statuses.iter_mut().take(5) {
             *s = Some(PhaseStatus::Done);
         }
-        let t = timeline(&steps, &statuses, Some(10), 0.0);
+        let t = timeline(&steps, &statuses, Some(11), 0.0);
         use StepState::*;
         assert_eq!(states(&t), vec![Done, Done, Active, Pending]);
         assert_eq!(t[1].fill, 1.0);

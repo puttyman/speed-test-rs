@@ -192,12 +192,13 @@ const MB50: u64 = 50_000_000;
 const MB100: u64 = 100_000_000;
 const MB250: u64 = 250_000_000;
 const GB1: u64 = 1_000_000_000;
+const GB2: u64 = 2_000_000_000;
 
 impl Profile {
     /// Names of the built-in profiles.
     pub const BUILTIN: [&'static str; 4] = ["quick", "standard", "extended", "concurrent"];
 
-    /// The default profile (SPEC §5.3, 17 steps incl. the LAN extension), in four blocks:
+    /// The default profile (SPEC §5.3, 20 steps incl. the LAN extension), in four blocks:
     /// idle latency, every download size (smallest first), every upload size, then packet
     /// loss. Sizes and counts match Cloudflare's sequence; only the order differs.
     pub fn standard() -> Self {
@@ -271,7 +272,10 @@ impl Profile {
             Step::download(MB25, 4),
             Step::download(MB100, 3),
             Step::download(MB250, 2),
+            // Fast links only: ramp halting skips these unless the previous size finished in
+            // under `bandwidth_finish_request_ms` (1 GB above ~2 Gbps, 2 GB above ~8 Gbps).
             Step::download(GB1, 2),
+            Step::download(GB2, 2),
         ]
     }
 
@@ -284,6 +288,9 @@ impl Profile {
             Step::upload(MB25, 4),
             Step::upload(MB50, 3),
             Step::upload(MB250, 2),
+            // Fast links only, as for downloads.
+            Step::upload(GB1, 2),
+            Step::upload(GB2, 2),
         ]
     }
 
@@ -558,7 +565,7 @@ mod tests {
     #[test]
     fn standard_matches_spec_table() {
         let p = Profile::standard();
-        assert_eq!(p.steps.len(), 17);
+        assert_eq!(p.steps.len(), 20);
         let summary: Vec<(Phase, Option<u64>, u32)> = p
             .steps
             .iter()
@@ -578,18 +585,21 @@ mod tests {
                 (Download, Some(100_000_000), 3),
                 (Download, Some(250_000_000), 2),
                 (Download, Some(1_000_000_000), 2),
+                (Download, Some(2_000_000_000), 2),
                 (Upload, Some(100_000), 8),
                 (Upload, Some(1_000_000), 6),
                 (Upload, Some(10_000_000), 4),
                 (Upload, Some(25_000_000), 4),
                 (Upload, Some(50_000_000), 3),
                 (Upload, Some(250_000_000), 2),
+                (Upload, Some(1_000_000_000), 2),
+                (Upload, Some(2_000_000_000), 2),
                 (PacketLoss, None, 1000),
             ]
         );
         assert!(p.steps[2].bypass_min_duration());
         assert!(!p.steps[3].bypass_min_duration());
-        assert_eq!(p.steps[16], Step::default_packet_loss());
+        assert_eq!(p.steps[19], Step::default_packet_loss());
         assert!(p.steps.iter().all(|s| s.streams(&Config::default()) == 1));
     }
 
@@ -657,7 +667,7 @@ mod tests {
             };
             assert_eq!(s.streams(&cfg), expected, "{s:?}");
         }
-        assert_eq!(e.steps.iter().filter(|s| s.streams(&cfg) == 4).count(), 5);
+        assert_eq!(e.steps.iter().filter(|s| s.streams(&cfg) == 4).count(), 8);
     }
 
     #[test]
@@ -785,13 +795,32 @@ mod tests {
 
     #[test]
     fn fast_link_runs_everything() {
-        // 10 Gbps symmetric: 1 GB takes 800 ms, under the 1 s threshold.
+        // 10 Gbps symmetric: 1 GB takes 800 ms, under the 1 s threshold, so 2 GB runs too.
         let p = Profile::standard();
         let (ramp, ran, _) = simulate(&p, &Config::default(), |_, b| b as f64 * 8.0 / 1e10 * 1e3);
-        assert_eq!(ran, (0..17).collect::<Vec<_>>());
+        assert_eq!(ran, (0..20).collect::<Vec<_>>());
         assert!(ramp.is_finished());
-        assert!((0..17).all(|i| ramp.status(i) == Some(PhaseStatus::Done)));
-        assert_eq!(ramp.halted_at(Direction::Download), None);
+        assert!((0..20).all(|i| ramp.status(i) == Some(PhaseStatus::Done)));
+        // 2 GB takes 1.6 s, so it registers as the halt size, but nothing is larger.
+        assert_eq!(ramp.halted_at(Direction::Download), Some(2_000_000_000));
+    }
+
+    #[test]
+    fn large_sizes_only_on_fast_links() {
+        let p = Profile::standard();
+        let ran_sizes = |bps: f64| {
+            let (_, ran, _) = simulate(&p, &Config::default(), |_, b| b as f64 * 8.0 / bps * 1e3);
+            let mut sizes: Vec<u64> = ran.iter().filter_map(|&i| p.steps[i].bytes()).collect();
+            sizes.sort_unstable();
+            sizes.dedup();
+            sizes.last().copied()
+        };
+        // 1 Gbps: 250 MB takes 2 s, so 1 GB never runs.
+        assert_eq!(ran_sizes(1e9), Some(250_000_000));
+        // 2.5 Gbps: 250 MB takes 0.8 s, so 1 GB runs (3.2 s) but 2 GB doesn't.
+        assert_eq!(ran_sizes(2.5e9), Some(1_000_000_000));
+        // 10 Gbps: 1 GB takes 0.8 s, so 2 GB runs.
+        assert_eq!(ran_sizes(1e10), Some(2_000_000_000));
     }
 
     #[test]
@@ -803,15 +832,16 @@ mod tests {
             Direction::Upload => b as f64 * 8.0 / 1e10 * 1e3,
         });
         assert_eq!(ramp.halted_at(Direction::Download), Some(10_000_000));
-        assert_eq!(ramp.halted_at(Direction::Upload), None);
+        // Upload reaches 2 GB (1.6 s), the largest size.
+        assert_eq!(ramp.halted_at(Direction::Upload), Some(2_000_000_000));
         // The 10 MB download (index 5) ran to completion; 25 MB+ downloads skipped.
         assert!(ran.contains(&5));
-        for i in 6..=9 {
+        for i in 6..=10 {
             assert_eq!(ramp.status(i), Some(PhaseStatus::Skipped), "step {}", i + 1);
             assert!(!ran.contains(&i));
         }
         // Every upload and the packet loss test still ran.
-        for i in 10..=16 {
+        for i in 11..=19 {
             assert_eq!(ramp.status(i), Some(PhaseStatus::Done), "step {}", i + 1);
         }
     }
@@ -842,7 +872,7 @@ mod tests {
         assert!(elapsed >= 1000.0);
         assert!(ramp.is_finished());
         let last = *ran.last().unwrap();
-        for i in 0..17 {
+        for i in 0..20 {
             let expected = if ran.contains(&i) {
                 PhaseStatus::Done
             } else {
@@ -851,8 +881,8 @@ mod tests {
             assert_eq!(ramp.status(i), Some(expected));
         }
         // Transfers stopped at the cap; packet loss (exempt) still ran last.
-        assert_eq!(last, 16);
-        assert!((3..16).any(|i| ramp.status(i) == Some(PhaseStatus::Skipped)));
+        assert_eq!(last, 19);
+        assert!((3..19).any(|i| ramp.status(i) == Some(PhaseStatus::Skipped)));
         assert_eq!(ramp.clone().next_step(0.0), None);
     }
 
@@ -893,7 +923,7 @@ mod tests {
         let (i, step) = r.next_step(1200.0).unwrap();
         assert_eq!(step.direction(), Some(Direction::Upload));
         assert_eq!(step.bytes(), Some(100_000));
-        for j in 3..10 {
+        for j in 3..=10 {
             assert_eq!(r.status(j), Some(PhaseStatus::Skipped), "step {j}");
         }
         r.complete_step(i, PhaseStatus::Done);
@@ -912,7 +942,7 @@ mod tests {
         // Past the cap: every transfer is skipped, packet loss still runs.
         let (i, step) = r.next_step(5000.0).unwrap();
         assert_eq!(step.phase(), Phase::PacketLoss);
-        assert_eq!(i, 16);
+        assert_eq!(i, 19);
         r.complete_step(i, PhaseStatus::Done);
         assert!(r.next_step(5000.0).is_none());
         assert!(r.is_finished());

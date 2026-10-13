@@ -51,6 +51,9 @@ fn packet_loss_probe() -> Option<std::rc::Rc<dyn crate::engine::PacketLossProbe>
 // Pure helpers
 // ---------------------------------------------------------------------------------------------
 
+/// Request size from which a step only runs on fast links.
+const FAST_LINK_BYTES: u64 = 1_000_000_000;
+
 /// One-line description of a profile step, e.g. `Download · 10 MB × 6`.
 pub fn step_label(step: &Step) -> String {
     use crate::components::charts::scale::format_bytes;
@@ -59,6 +62,13 @@ pub fn step_label(step: &Step) -> String {
     match *step {
         Step::Latency { num_packets } => {
             format!("Latency · {}", plural(num_packets, "probe", "probes"))
+        }
+        // Sizes of 1 GB and up only run on fast links (ramp halting skips them otherwise).
+        Step::Download { bytes, count, .. } if bytes >= FAST_LINK_BYTES => {
+            format!("Fast link · Download {} × {count}", format_bytes(bytes))
+        }
+        Step::Upload { bytes, count, .. } if bytes >= FAST_LINK_BYTES => {
+            format!("Fast link · Upload {} × {count}", format_bytes(bytes))
         }
         Step::Download { bytes, count, .. } => {
             format!("Download · {} × {count}", format_bytes(bytes))
@@ -1302,6 +1312,14 @@ mod tests {
             "Download · 10 MB × 6"
         );
         assert_eq!(step_label(&Step::upload(100_000, 8)), "Upload · 100 kB × 8");
+        assert_eq!(
+            step_label(&Step::download(2_000_000_000, 2)),
+            "Fast link · Download 2 GB × 2"
+        );
+        assert_eq!(
+            step_label(&Step::upload(1_000_000_000, 2)),
+            "Fast link · Upload 1 GB × 2"
+        );
         assert_eq!(
             step_label(&Step::Latency { num_packets: 1 }),
             "Latency · 1 probe"

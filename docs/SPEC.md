@@ -158,18 +158,25 @@ download and upload, which made the hero and timeline jump back and forth.
 | 7 | Download | 25 MB × 4 |
 | 8 | Download | 100 MB × 3 |
 | 9 | Download | 250 MB × 2 |
-| 10 | Download *(LAN extension)* | 1 GB × 2 |
-| 11 | Upload | 100 kB × 8 |
-| 12 | Upload | 1 MB × 6 |
-| 13 | Upload | 10 MB × 4 |
-| 14 | Upload | 25 MB × 4 |
-| 15 | Upload | 50 MB × 3 |
-| 16 | Upload *(LAN extension)* | 250 MB × 2 |
-| 17 | Packet loss | 1000 packets, batch 10, 10 ms between batches, 3000 ms wait |
+| 10 | Download *(fast links)* | 1 GB × 2 |
+| 11 | Download *(fast links)* | 2 GB × 2 |
+| 12 | Upload | 100 kB × 8 |
+| 13 | Upload | 1 MB × 6 |
+| 14 | Upload | 10 MB × 4 |
+| 15 | Upload | 25 MB × 4 |
+| 16 | Upload | 50 MB × 3 |
+| 17 | Upload | 250 MB × 2 |
+| 18 | Upload *(fast links)* | 1 GB × 2 |
+| 19 | Upload *(fast links)* | 2 GB × 2 |
+| 20 | Packet loss | 1000 packets, batch 10, 10 ms between batches, 3000 ms wait |
 
 **Ramp halting** (as in Cloudflare): within one direction, once any request in a size set takes
 ≥ `bandwidth_finish_request_ms` (default **1000 ms**), larger sizes in that direction are
-skipped. A slow Wi-Fi client stops early. A multi-gig wired client continues to the 1 GB steps.
+skipped. A slow Wi-Fi client stops early. A fast wired client continues to the *fast links*
+steps: 1 GB runs when 250 MB finished in under a second (above about 2 Gbps), and 2 GB when
+1 GB did (above about 8 Gbps), so even multi-gig links get transfers long enough to show
+sustained speed. The UI labels them "Fast link". The 2 GB steps stay within the server's
+default per-request cap (`--max-bytes`, 2 GB).
 
 **Direction budget**: download and upload each get **25 s** of size-based transfers
 (`max_direction_ms`), counted from their first transfer. When it runs out, the rest of that
