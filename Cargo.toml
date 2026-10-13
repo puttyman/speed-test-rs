@@ -1,6 +1,6 @@
 [package]
 name = "speed-test-rs"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "Self-hosted, Cloudflare-style network speed test for your LAN, built with Leptos and Axum"
 license = "MIT OR Apache-2.0"

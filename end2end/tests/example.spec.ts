@@ -84,6 +84,9 @@ test("settings drawer opens and closes with the keyboard", async ({ page }) => {
   await hydrated(page);
   await page.locator("#settings-button").click();
   await expect(page.locator("#settings-drawer")).toHaveClass(/is-open/);
+  // The About section shows the same version the server reports.
+  const info = await (await page.request.get(`${BASE}/api/info`)).json();
+  await expect(page.locator(".about-version")).toHaveText(info.version);
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings-drawer")).not.toHaveClass(/is-open/);
   await expect(page.locator("#settings-button")).toBeFocused();

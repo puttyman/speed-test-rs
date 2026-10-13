@@ -22,6 +22,16 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The app version (UI and server are the same binary).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const REPO_URL: &str = "https://github.com/puttyman/speed-test-rs";
+
+/// Release notes of this version.
+fn release_url() -> String {
+    format!("{REPO_URL}/releases/tag/v{VERSION}")
+}
+
 #[component]
 pub fn SettingsButton() -> impl IntoView {
     let ui = use_ui_state();
@@ -266,6 +276,25 @@ pub fn SettingsDrawer(
                     </label>
                     <p class="setting-note">
                         "Other devices see “1 hidden device testing” instead of this device's name and label."
+                    </p>
+                </section>
+
+                <section class="setting-group" aria-labelledby="set-about">
+                    <h3 id="set-about" class="setting-group-title">"About"</h3>
+                    <dl class="about">
+                        <div class="about-row">
+                            <dt>"Version"</dt>
+                            <dd class="about-version">{VERSION}</dd>
+                        </div>
+                    </dl>
+                    <p class="setting-note about-links">
+                        <a href=release_url() target="_blank" rel="noopener noreferrer">
+                            "Release notes"
+                        </a>
+                        " · "
+                        <a href=REPO_URL target="_blank" rel="noopener noreferrer">
+                            "Source code"
+                        </a>
                     </p>
                 </section>
             </div>

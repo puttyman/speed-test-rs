@@ -202,3 +202,29 @@
 	font-size: var(--text-xs);
 	font-variant-numeric: tabular-nums;
 }
+
+.about {
+	margin: 0;
+}
+
+.about-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--space-4);
+
+	dt {
+		color: var(--color-text-body);
+	}
+
+	dd {
+		margin: 0;
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+}
+
+.about-links a {
+	color: var(--color-link);
+}
