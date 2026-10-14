@@ -218,6 +218,8 @@ impl HttpTransport {
                 .iter()
                 .any(|t| t.server_ms.is_some())
                 .then_some(server_ms),
+            client_ms: None,
+            round_trips: 0,
         })
     }
 
@@ -234,6 +236,8 @@ impl HttpTransport {
         let reqs = parts.iter().map(|&n| async move {
             let mut duration = 0.0;
             let mut server: Option<f64> = None;
+            let mut client = 0.0;
+            let mut requests = 0u32;
             for size in chunk_sizes(n, HTTP_UPLOAD_CHUNK_BYTES) {
                 let url = self.url("/api/__up", "");
                 let init = self.init("POST")?;
@@ -254,18 +258,28 @@ impl HttpTransport {
                     _ => t.t_headers - t.t_start,
                 };
                 duration += http_upload_duration_ms(span, t.server_ms);
+                client += span;
+                requests += 1;
                 if let Some(ms) = t.server_ms {
                     server = Some(server.unwrap_or(0.0) + ms);
                 }
             }
-            Ok::<_, EngineError>((duration, server))
+            Ok::<_, EngineError>((duration, server, client, requests))
         });
         let per_stream = try_join_all(reqs).await?;
-        let duration = per_stream.iter().map(|(d, _)| *d).fold(0.0, f64::max);
-        let server_max = per_stream.iter().filter_map(|(_, s)| *s).reduce(f64::max);
+        let duration = per_stream.iter().map(|s| s.0).fold(0.0, f64::max);
+        let server_max = per_stream.iter().filter_map(|s| s.1).reduce(f64::max);
+        // The client's view of the slowest stream; each request's `requestStart →
+        // responseStart` includes one round trip.
+        let (client_ms, round_trips) = per_stream
+            .iter()
+            .map(|s| (s.2, s.3))
+            .fold((0.0, 0), |a, b| if b.0 > a.0 { b } else { a });
         Ok(Sample {
             duration_ms: duration,
             server_ms: server_max,
+            client_ms: (round_trips > 0).then_some(client_ms),
+            round_trips,
         })
     }
 }

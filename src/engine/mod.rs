@@ -355,5 +355,10 @@ mod api {
         /// The duration the bandwidth is based on.
         pub duration_ms: f64,
         pub server_ms: Option<f64>,
+        /// Uploads: how long the client saw the transfer take (first byte sent to the
+        /// server's reply), which includes `round_trips` network round trips. The runner
+        /// uses it as a lower bound for `duration_ms` (see `util::upload_duration_ms`).
+        pub client_ms: Option<f64>,
+        pub round_trips: u32,
     }
 }

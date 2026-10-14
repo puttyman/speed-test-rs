@@ -172,6 +172,8 @@ impl WsTransport {
         Ok(Sample {
             duration_ms,
             server_ms: Some(server_ms),
+            client_ms: None,
+            round_trips: 0,
         })
     }
 
@@ -187,6 +189,7 @@ impl WsTransport {
             ids.push(id);
             s.send(&ClientMsg::Upload { id, bytes: n })?;
         }
+        let t_start = now();
         let mut remaining = parts.clone();
         let mut offsets = vec![0usize; parts.len()];
         let buf_len = self.upload.len();
@@ -219,6 +222,7 @@ impl WsTransport {
                 .map(|(s, &id)| wait_upload_done(s, id)),
         )
         .await;
+        let client_ms = now() - t_start;
         let mut server_ms: f64 = 0.0;
         for (i, r) in results.into_iter().enumerate() {
             let (got, ms) = r?;
@@ -233,6 +237,9 @@ impl WsTransport {
         Ok(Sample {
             duration_ms: server_ms,
             server_ms: Some(server_ms),
+            // `upload` request out, `upload_done` back: one round trip.
+            client_ms: Some(client_ms),
+            round_trips: 1,
         })
     }
 }

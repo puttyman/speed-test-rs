@@ -112,6 +112,28 @@ pub fn http_upload_duration_ms(request_to_response_ms: f64, server_ms: Option<f6
     }
 }
 
+/// Upload duration from the server's timer and the client's view.
+///
+/// The server times reading the body, but anything that buffers the upload first
+/// (Docker's userland port proxy, a reverse proxy) makes the server read it at memory
+/// speed and the result far too fast. The client's span (first byte sent until the
+/// server's reply) minus the round trips it includes is a lower bound for the real
+/// transfer time, so the longer of the two is used.
+pub fn upload_duration_ms(
+    server_ms: f64,
+    client_ms: Option<f64>,
+    round_trips: u32,
+    rtt_ms: Option<f64>,
+) -> f64 {
+    let client = client_ms
+        .filter(|c| c.is_finite())
+        .map(|c| c - f64::from(round_trips) * rtt_ms.unwrap_or(0.0).max(0.0));
+    match client {
+        Some(c) if c > server_ms || !server_ms.is_finite() || server_ms <= 0.0 => c.max(0.0),
+        _ => server_ms,
+    }
+}
+
 /// Largest HTTP upload request; bigger uploads are sent as several back-to-back requests.
 pub const HTTP_UPLOAD_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -250,5 +272,21 @@ mod tests {
         let parts: Vec<u64> = chunk_sizes(gb, HTTP_UPLOAD_CHUNK_BYTES).collect();
         assert_eq!(parts.iter().sum::<u64>(), gb);
         assert!(parts.iter().all(|&p| p <= HTTP_UPLOAD_CHUNK_BYTES));
+    }
+
+    #[test]
+    fn upload_duration_is_never_shorter_than_the_client_saw() {
+        // Normal LAN: server 80 ms; client 84 ms incl. one 3 ms round trip = 81 ms.
+        assert_eq!(upload_duration_ms(80.0, Some(84.0), 1, Some(3.0)), 81.0);
+        assert_eq!(upload_duration_ms(80.0, Some(82.0), 1, Some(3.0)), 80.0);
+        // A proxy buffered the body: server read it in 5 ms, the client needed 800 ms.
+        assert_eq!(upload_duration_ms(5.0, Some(800.0), 1, Some(3.0)), 797.0);
+        // Chunked HTTP: 4 requests, so 4 round trips are subtracted.
+        assert_eq!(upload_duration_ms(10.0, Some(412.0), 4, Some(3.0)), 400.0);
+        // No client view, or no latency yet.
+        assert_eq!(upload_duration_ms(80.0, None, 1, Some(3.0)), 80.0);
+        assert_eq!(upload_duration_ms(5.0, Some(50.0), 1, None), 50.0);
+        // Missing server time falls back to the client.
+        assert_eq!(upload_duration_ms(0.0, Some(50.0), 1, Some(3.0)), 47.0);
     }
 }

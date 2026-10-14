@@ -375,6 +375,7 @@ impl TestController {
         opts.packet_loss = packet_loss_probe();
         let session = opts.session;
         let percentile = opts.config.bandwidth_percentile;
+        let min_request_ms = opts.config.bandwidth_min_request_ms;
 
         // Remember the label for the next run on this device.
         let label = clean_label(&self.label.get_untracked());
@@ -462,8 +463,13 @@ impl TestController {
                     Direction::Download => (&mut a.down, this.download, this.down_samples),
                     Direction::Upload => (&mut a.up, this.upload, this.up_samples),
                 };
-                v.push(point.bps);
-                sig.set(stats::percentile(v, percentile));
+                // Same rule as the final summary (`Measurements::valid_bandwidth`): very
+                // short requests (a small body that fits in network buffers) aren't real
+                // throughput, so they don't move the live number.
+                if point.duration_ms >= min_request_ms {
+                    v.push(point.bps);
+                    sig.set(stats::percentile(v, percentile));
+                }
                 samples.update(|s| s.push(point.bps));
             }
             EngineEvent::Live { direction, bps } => {

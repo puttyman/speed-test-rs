@@ -36,7 +36,7 @@ use uuid::Uuid;
 use super::http_transport::HttpTransport;
 use super::js::{AbortFlag, EngineError, Result, location_origin, now, sleep, window};
 use super::loaded_latency::{live_loop, probe_loop};
-use super::util::next_timed_size;
+use super::util::{next_timed_size, upload_duration_ms};
 use super::ws_transport::{WsTransport, open};
 use super::{
     EngineEvent, EngineOptions, PacketLossContext, PacketLossParams, Sample, UploadBuffer,
@@ -420,7 +420,23 @@ impl Run<'_> {
         streams: u8,
         bypass: bool,
     ) -> Result<Sample> {
-        let sample = self.link.transfer(dir, bytes, streams).await?;
+        let mut sample = self.link.transfer(dir, bytes, streams).await?;
+        if dir == Direction::Upload {
+            // Never shorter than the client saw (minus round trips at the lowest idle RTT).
+            let rtt = self
+                .measurements
+                .borrow()
+                .latency
+                .iter()
+                .copied()
+                .reduce(f64::min);
+            sample.duration_ms = upload_duration_ms(
+                sample.duration_ms,
+                sample.client_ms,
+                sample.round_trips,
+                rtt,
+            );
+        }
         let point = BandwidthPoint::new(bytes, sample.duration_ms, sample.server_ms);
         self.measurements
             .borrow_mut()
